@@ -25,6 +25,7 @@ builder.Services.AddDbContext<AppDb>(o => o.UseNpgsql(connectionString,
     npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 4, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<OtpService>();
+builder.Services.AddHttpClient<OtpEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<QrService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>

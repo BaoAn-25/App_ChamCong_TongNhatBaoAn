@@ -8,7 +8,7 @@ WebAPI_TongNhatBaoAn/
 ├── Controllers/   Auth, Me, Employees, Shifts, Office, Attendance, Requests
 ├── Models/        Entity (Employee, Shift, Office, Attendance, WorkRequest, OtpChallenge, RefreshToken)
 ├── Dtos/          Request/Response (không bao giờ trả passwordHash hay QR secret)
-├── Services/      JWT, OTP + SMTP, QR ký HMAC, GPS, múi giờ VN, Validators
+├── Services/      JWT, OTP + Brevo HTTPS, QR ký HMAC, GPS, múi giờ VN, Validators
 ├── Data/          AppDb (EF Core) + Migrations
 ├── Program.cs     Cấu hình, health check, swagger, migrate + seed admin
 └── Dockerfile     Đóng gói để deploy (Render/Koyeb/Railway)
@@ -21,7 +21,7 @@ WebAPI_TongNhatBaoAn/
 | `Jwt__Key` | Chuỗi bí mật >= 32 ký tự, **giống nhau** ở mọi server |
 | `RUN_MIGRATIONS` | `true` chỉ ở **server chính** (migrate DB + seed admin). Server phụ để `false` |
 | `Seed__AdminUsername`, `Seed__AdminEmail`, `Seed__AdminPassword` | Tạo admin đầu tiên (mật khẩu >= 8 ký tự) |
-| `Smtp__Host`, `Smtp__Port`, `Smtp__User`, `Smtp__Password`, `Smtp__From` | Gửi OTP qua email |
+| `Brevo__ApiKey`, `Email__From`, `Email__FromName` | Gửi OTP qua Brevo HTTPS API; email người gửi phải được xác minh |
 | `Auth__DebugReturnOtp` | `true` chỉ khi test: trả OTP trong response (tắt khi chạy thật) |
 
 ## Chạy local
@@ -46,3 +46,7 @@ dotnet tool run dotnet-ef migrations add TenThayDoi -o Data/Migrations
 Xem `/swagger`. Đăng nhập 2 bước: `POST /api/auth/login` (trả `challengeId`) → `POST /api/auth/verify-otp` (trả token). Gửi token ở header `Authorization: Bearer <accessToken>`.
 Chấm công: `POST /api/attendance/check-in` và `/check-out`, body gồm `qr, latitude, longitude, accuracy, capturedAt (UTC ISO8601), idempotencyKey`.
 Sức khỏe: `/health/live`, `/health/ready`.
+
+## Gửi OTP trên Render
+
+Xem [hướng dẫn cấu hình Brevo](../docs/RENDER_EMAIL_OTP.md). Production không trả OTP trực tiếp dù bật DebugReturnOtp.

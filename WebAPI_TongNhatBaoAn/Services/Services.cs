@@ -1,6 +1,4 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Net;
-using System.Net.Mail;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -90,9 +88,9 @@ public class TokenService(IConfiguration cfg, AppDb db)
     }
 }
 
-public class OtpService(AppDb db, IConfiguration cfg, ILogger<OtpService> log)
+public class OtpService(AppDb db, IConfiguration cfg, OtpEmailSender emailSender, IHostEnvironment environment)
 {
-    public bool DebugReturn => cfg.GetValue<bool>("Auth:DebugReturnOtp");
+    public bool DebugReturn => environment.IsDevelopment() && cfg.GetValue<bool>("Auth:DebugReturnOtp");
 
     private static string HashCode(Guid id, string code) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{id}:{code}")));
@@ -127,36 +125,13 @@ public class OtpService(AppDb db, IConfiguration cfg, ILogger<OtpService> log)
         return emp == null ? (null, fail) : (emp, null);
     }
 
-    public async Task SendAsync(string to, string subject, string code)
+    public Task SendAsync(string to, string subject, string code)
     {
-        var host = cfg["Smtp:Host"];
-        if (string.IsNullOrWhiteSpace(host))
-        {
-            log.LogWarning("Smtp chưa cấu hình, không gửi được email tới {To}.", to);
-            return;
-        }
-        try
-        {
-            using var client = new SmtpClient(host, int.Parse(cfg["Smtp:Port"] ?? "587"))
-            {
-                EnableSsl = true,
-                Timeout = 5000,
-                Credentials = new NetworkCredential(cfg["Smtp:User"], cfg["Smtp:Password"])
-            };
-            var from = cfg["Smtp:From"] ?? cfg["Smtp:User"]!;
-            using var msg = new MailMessage(from, to, subject,
-                $"Mã xác thực của bạn là {code}. Mã có hiệu lực {cfg["Auth:OtpMinutes"] ?? "5"} phút, không chia sẻ cho ai.");
-            await client.SendMailAsync(msg);
-        }
-        catch (Exception ex)
-        {
-            log.LogWarning(ex, "Gửi email OTP thất bại tới {To}.", to);
-            if (!DebugReturn)
-            {
-                throw new InvalidOperationException("Không gửi được email từ máy chủ cloud (cổng 587 bị chặn). Hãy bật Auth__DebugReturnOtp=true trên Render.");
-            }
-        }
+        // Local development only; never bypass email verification on Render.
+        if (DebugReturn) return Task.CompletedTask;
+        return emailSender.SendAsync(to, subject, code);
     }
+
 }
 
 public static class Validators

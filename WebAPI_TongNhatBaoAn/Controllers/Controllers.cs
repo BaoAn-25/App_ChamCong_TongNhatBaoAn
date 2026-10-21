@@ -41,7 +41,15 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         var (challenge, code) = otp.Create(emp.Id, Verify);
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateException) { return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409); }
-        await otp.SendAsync(emp.Email, "Xác minh email đăng ký", code);
+        try { await otp.SendAsync(emp.Email, "Xác minh email đăng ký", code); }
+        catch (OtpDeliveryException)
+        {
+            // Allow registration to be retried after delivery failure.
+            db.OtpChallenges.Remove(challenge);
+            db.Employees.Remove(emp);
+            await db.SaveChangesAsync();
+            return Fail(OtpDeliveryException.PublicMessage, 503);
+        }
         return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null));
     }
 
@@ -66,7 +74,13 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
 
         var (challenge, code) = otp.Create(emp.Id, Login);
         await db.SaveChangesAsync();
-        await otp.SendAsync(emp.Email, "Mã OTP đăng nhập", code);
+        try { await otp.SendAsync(emp.Email, "Mã OTP đăng nhập", code); }
+        catch (OtpDeliveryException)
+        {
+            challenge.Consumed = true;
+            await db.SaveChangesAsync();
+            return Fail(OtpDeliveryException.PublicMessage, 503);
+        }
         return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null));
     }
 

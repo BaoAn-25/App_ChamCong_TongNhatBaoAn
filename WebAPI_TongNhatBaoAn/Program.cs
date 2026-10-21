@@ -108,7 +108,8 @@ static async Task SeedAsync(AppDb db, IConfiguration cfg)
     var username = cfg["Seed:AdminUsername"]?.Trim().ToLowerInvariant();
     var email = cfg["Seed:AdminEmail"]?.Trim().ToLowerInvariant();
     var password = cfg["Seed:AdminPassword"];
-    if (!await db.Employees.AnyAsync(e => e.Role == Roles.Admin) &&
+    var existingAdmin = await db.Employees.FirstOrDefaultAsync(e => e.Role == Roles.Admin);
+    if (existingAdmin == null &&
         !string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(email) && password is { Length: >= 8 })
     {
         db.Employees.Add(new Employee
@@ -116,6 +117,10 @@ static async Task SeedAsync(AppDb db, IConfiguration cfg)
             Name = cfg["Seed:AdminName"] ?? "Quản trị viên", Username = username, Email = email,
             Role = Roles.Admin, EmailVerified = true, PasswordHash = BCrypt.Net.BCrypt.HashPassword(password)
         });
+    }
+    else if (existingAdmin != null && !string.IsNullOrEmpty(email) && existingAdmin.Email != email)
+    {
+        existingAdmin.Email = email;
     }
     await db.SaveChangesAsync();
 }

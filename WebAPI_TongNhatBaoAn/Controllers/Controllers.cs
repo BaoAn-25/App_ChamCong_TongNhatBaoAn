@@ -29,15 +29,18 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         if (err != null) return Fail(err);
         var username = r.Username.Trim().ToLowerInvariant();
         var email = r.Email.Trim().ToLowerInvariant();
-        if (await db.Employees.AnyAsync(e => e.Username == username || e.Email == email))
+        var existing = await db.Employees.FirstOrDefaultAsync(e => e.Username == username || e.Email == email);
+        // Recover an interrupted registration only with the original credentials.
+        if (existing != null && (existing.Username != username || existing.Email != email ||
+            existing.EmailVerified || !existing.Active || !BCrypt.Net.BCrypt.Verify(r.Password, existing.PasswordHash)))
             return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409);
 
-        var emp = new Employee
+        var emp = existing ?? new Employee
         {
             Name = r.Name.Trim(), Email = email, Username = username,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password), Role = Roles.Employee
         };
-        db.Employees.Add(emp);
+        if (existing == null) db.Employees.Add(emp);
         var (challenge, code) = otp.Create(emp.Id, Verify);
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateException) { return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409); }
@@ -46,7 +49,7 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         {
             // Allow registration to be retried after delivery failure.
             db.OtpChallenges.Remove(challenge);
-            db.Employees.Remove(emp);
+            if (existing == null) db.Employees.Remove(emp);
             await db.SaveChangesAsync();
             return Fail(OtpDeliveryException.PublicMessage, 503);
         }
@@ -89,7 +92,7 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
     {
         var (emp, error) = await otp.VerifyAsync(r.ChallengeId, r.Code, Login);
         if (emp == null) return Fail(error!, 401);
-        if (!emp.Active) return Fail("Tài khoản đã bị khóa.", 403);
+        if (!emp.Active || !emp.EmailVerified) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
         return Ok(await IssueAsync(emp));
     }
 
@@ -106,11 +109,11 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         return Ok(await IssueAsync(emp));
     }
 
-    [Authorize, HttpPost("logout")]
+    [HttpPost("logout")]
     public async Task<IActionResult> Logout(RefreshRequest r)
     {
         var hash = TokenService.Hash(r.RefreshToken ?? "");
-        var stored = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash && t.EmployeeId == UserId);
+        var stored = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash);
         if (stored != null) { stored.Revoked = true; await db.SaveChangesAsync(); }
         return NoContent();
     }

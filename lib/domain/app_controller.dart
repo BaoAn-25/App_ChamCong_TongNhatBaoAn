@@ -29,21 +29,9 @@ class AppController extends ChangeNotifier {
   bool _loading = false;
   bool get isLoading => _loading;
 
-  AppController([dynamic store])
-      : client = ApiClient(),
-        auth = AuthService(ApiClient()),
-        employeeRepo = EmployeeRepository(ApiClient()),
-        shiftRepo = ShiftRepository(ApiClient()),
-        officeRepo = OfficeRepository(ApiClient()),
-        attendanceRepo = AttendanceRepository(ApiClient()),
-        requestRepo = RequestRepository(ApiClient()) {
-    client.onUnauthorized = () {
-      _user = null;
-      notifyListeners();
-    };
-  }
+  factory AppController([dynamic store]) => AppController.withServices();
 
-  AppController.withServices({
+  factory AppController.withServices({
     ApiClient? apiClient,
     AuthService? authService,
     EmployeeRepository? employeeRepository,
@@ -51,32 +39,49 @@ class AppController extends ChangeNotifier {
     OfficeRepository? officeRepository,
     AttendanceRepository? attendanceRepository,
     RequestRepository? requestRepository,
-  })  : client = apiClient ?? ApiClient(),
-        auth = authService ?? AuthService(apiClient ?? ApiClient()),
-        employeeRepo = employeeRepository ?? EmployeeRepository(apiClient ?? ApiClient()),
-        shiftRepo = shiftRepository ?? ShiftRepository(apiClient ?? ApiClient()),
-        officeRepo = officeRepository ?? OfficeRepository(apiClient ?? ApiClient()),
-        attendanceRepo = attendanceRepository ?? AttendanceRepository(apiClient ?? ApiClient()),
-        requestRepo = requestRepository ?? RequestRepository(apiClient ?? ApiClient()) {
+  }) {
+    final shared = apiClient ?? authService?.client ?? ApiClient();
+    return AppController._(
+      shared,
+      authService ?? AuthService(shared),
+      employeeRepository ?? EmployeeRepository(shared),
+      shiftRepository ?? ShiftRepository(shared),
+      officeRepository ?? OfficeRepository(shared),
+      attendanceRepository ?? AttendanceRepository(shared),
+      requestRepository ?? RequestRepository(shared),
+    );
+  }
+
+  AppController._(
+    this.client,
+    this.auth,
+    this.employeeRepo,
+    this.shiftRepo,
+    this.officeRepo,
+    this.attendanceRepo,
+    this.requestRepo,
+  ) {
     client.onUnauthorized = () {
       _user = null;
+      data = AppData();
       notifyListeners();
     };
   }
 
   static String randomToken([int length = 24]) => base64UrlEncode(
-        List.generate(length, (_) => Random.secure().nextInt(256)),
-      );
+    List.generate(length, (_) => Random.secure().nextInt(256)),
+  );
 
   static Future<String> hashPassword(String password, String salt) async {
-    final key = await Pbkdf2(
-      macAlgorithm: Hmac.sha256(),
-      iterations: 100000,
-      bits: 256,
-    ).deriveKey(
-      secretKey: SecretKey(utf8.encode(password)),
-      nonce: utf8.encode(salt),
-    );
+    final key =
+        await Pbkdf2(
+          macAlgorithm: Hmac.sha256(),
+          iterations: 100000,
+          bits: 256,
+        ).deriveKey(
+          secretKey: SecretKey(utf8.encode(password)),
+          nonce: utf8.encode(salt),
+        );
     return base64Encode(await key.extractBytes());
   }
 
@@ -135,8 +140,12 @@ class AppController extends ChangeNotifier {
     try {
       final officeFuture = officeRepo.get().catchError((_) => data.office);
       final shiftsFuture = shiftRepo.list().catchError((_) => data.shifts);
-      final attendanceFuture = attendanceRepo.list().catchError((_) => data.attendance);
-      final requestsFuture = requestRepo.list().catchError((_) => data.requests);
+      final attendanceFuture = attendanceRepo.list().catchError(
+        (_) => data.attendance,
+      );
+      final requestsFuture = requestRepo.list().catchError(
+        (_) => data.requests,
+      );
       final employeesFuture = isAdmin
           ? employeeRepo.list().catchError((_) => data.employees)
           : Future.value([?_user]);
@@ -187,10 +196,7 @@ class AppController extends ChangeNotifier {
     if (pendingChallengeId == null) {
       throw StateError('Không có phiên xác minh email.');
     }
-    await auth.verifyEmail(
-      challengeId: pendingChallengeId!,
-      code: code,
-    );
+    await auth.verifyEmail(challengeId: pendingChallengeId!, code: code);
     pendingChallengeId = null;
     pendingAction = null;
     notifyListeners();
@@ -198,10 +204,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> beginLogin(String username, String password) async {
     demoOtp = null;
-    final cid = await auth.login(
-      username: username,
-      password: password,
-    );
+    final cid = await auth.login(username: username, password: password);
     pendingChallengeId = cid;
     pendingAction = 'login';
     pendingUsername = username;
@@ -212,10 +215,7 @@ class AppController extends ChangeNotifier {
     if (pendingChallengeId == null) {
       throw StateError('Phiên OTP hết hạn hoặc không hợp lệ.');
     }
-    _user = await auth.verifyOtp(
-      challengeId: pendingChallengeId!,
-      code: code,
-    );
+    _user = await auth.verifyOtp(challengeId: pendingChallengeId!, code: code);
     pendingChallengeId = null;
     pendingAction = null;
     pendingUsername = null;
@@ -254,7 +254,9 @@ class AppController extends ChangeNotifier {
       return;
     }
     requireAdmin();
-    final existing = data.employees.where((e) => e.id == employee.id).firstOrNull;
+    final existing = data.employees
+        .where((e) => e.id == employee.id)
+        .firstOrNull;
     if (existing != null) {
       final updated = await employeeRepo.update(
         id: employee.id,

@@ -29,14 +29,15 @@ class ApiClient {
     String? baseUrl,
     http.Client? httpClient,
     FlutterSecureStorage? secureStorage,
-  })  : baseUrl = (baseUrl ??
-                const String.fromEnvironment(
-                  'API_BASE_URL',
-                  defaultValue: defaultBaseUrl,
-                ))
-            .replaceAll(RegExp(r'/+$'), ''),
-        _http = httpClient ?? http.Client(),
-        _secureStorage = secureStorage ?? const FlutterSecureStorage();
+  }) : baseUrl =
+           (baseUrl ??
+                   const String.fromEnvironment(
+                     'API_BASE_URL',
+                     defaultValue: defaultBaseUrl,
+                   ))
+               .replaceAll(RegExp(r'/+$'), ''),
+       _http = httpClient ?? http.Client(),
+       _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -51,6 +52,7 @@ class ApiClient {
   }
 
   bool get hasTokens => _accessToken != null && _refreshToken != null;
+  String? get refreshToken => _refreshToken;
 
   Future<void> setTokens({
     required String access,
@@ -92,9 +94,8 @@ class ApiClient {
     final cleanPath = path.startsWith('/') ? path : '/$path';
     final fullUrl = '$baseUrl$cleanPath';
     if (query == null || query.isEmpty) return Uri.parse(fullUrl);
-    final strQuery = query.map(
-      (k, v) => MapEntry(k, v?.toString() ?? ''),
-    )..removeWhere((_, v) => v.isEmpty);
+    final strQuery = query.map((k, v) => MapEntry(k, v?.toString() ?? ''))
+      ..removeWhere((_, v) => v.isEmpty);
     return Uri.parse(fullUrl).replace(queryParameters: strQuery);
   }
 
@@ -105,69 +106,61 @@ class ApiClient {
   }) async {
     return _sendWithRetry(
       () => _http.get(_uri(path, query), headers: _headers(auth)),
+      allowRefresh: auth,
     );
   }
 
-  Future<dynamic> post(
-    String path, {
-    dynamic body,
-    bool auth = true,
-  }) async {
+  Future<dynamic> post(String path, {dynamic body, bool auth = true}) async {
     return _sendWithRetry(
       () => _http.post(
         _uri(path),
         headers: _headers(auth),
         body: body != null ? jsonEncode(body) : null,
       ),
+      allowRefresh: auth,
     );
   }
 
-  Future<dynamic> patch(
-    String path, {
-    dynamic body,
-    bool auth = true,
-  }) async {
+  Future<dynamic> patch(String path, {dynamic body, bool auth = true}) async {
     return _sendWithRetry(
       () => _http.patch(
         _uri(path),
         headers: _headers(auth),
         body: body != null ? jsonEncode(body) : null,
       ),
+      allowRefresh: auth,
     );
   }
 
-  Future<dynamic> put(
-    String path, {
-    dynamic body,
-    bool auth = true,
-  }) async {
+  Future<dynamic> put(String path, {dynamic body, bool auth = true}) async {
     return _sendWithRetry(
       () => _http.put(
         _uri(path),
         headers: _headers(auth),
         body: body != null ? jsonEncode(body) : null,
       ),
+      allowRefresh: auth,
     );
   }
 
-  Future<dynamic> delete(
-    String path, {
-    dynamic body,
-    bool auth = true,
-  }) async {
+  Future<dynamic> delete(String path, {dynamic body, bool auth = true}) async {
     return _sendWithRetry(
       () => _http.delete(
         _uri(path),
         headers: _headers(auth),
         body: body != null ? jsonEncode(body) : null,
       ),
+      allowRefresh: auth,
     );
   }
 
-  Future<dynamic> _sendWithRetry(Future<http.Response> Function() req) async {
+  Future<dynamic> _sendWithRetry(
+    Future<http.Response> Function() req, {
+    bool allowRefresh = true,
+  }) async {
     http.Response res;
     try {
-      res = await req().timeout(const Duration(seconds: 25));
+      res = await req().timeout(const Duration(seconds: 90));
     } on TimeoutException {
       throw ApiException(
         408,
@@ -180,11 +173,11 @@ class ApiClient {
       );
     }
 
-    if (res.statusCode == 401 && _refreshToken != null) {
+    if (allowRefresh && res.statusCode == 401 && _refreshToken != null) {
       final refreshed = await _tryRefresh();
       if (refreshed) {
         try {
-          res = await req().timeout(const Duration(seconds: 25));
+          res = await req().timeout(const Duration(seconds: 90));
         } catch (_) {}
       } else {
         await clearTokens();

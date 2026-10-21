@@ -31,10 +31,7 @@ class AuthService {
     await client.post(
       '/api/auth/verify-email',
       auth: false,
-      body: {
-        'challengeId': challengeId,
-        'code': code.trim(),
-      },
+      body: {'challengeId': challengeId, 'code': code.trim()},
     );
   }
 
@@ -45,10 +42,7 @@ class AuthService {
     final res = await client.post(
       '/api/auth/login',
       auth: false,
-      body: {
-        'username': username.trim(),
-        'password': password,
-      },
+      body: {'username': username.trim(), 'password': password},
     );
     return res['challengeId'].toString();
   }
@@ -60,10 +54,7 @@ class AuthService {
     final res = await client.post(
       '/api/auth/verify-otp',
       auth: false,
-      body: {
-        'challengeId': challengeId,
-        'code': code.trim(),
-      },
+      body: {'challengeId': challengeId, 'code': code.trim()},
     );
     await client.setTokens(
       access: res['accessToken'],
@@ -74,7 +65,13 @@ class AuthService {
 
   Future<void> logout() async {
     try {
-      await client.post('/api/auth/logout', body: {});
+      if (client.refreshToken != null) {
+        await client.post(
+          '/api/auth/logout',
+          auth: false,
+          body: {'refreshToken': client.refreshToken},
+        );
+      }
     } catch (_) {}
     await client.clearTokens();
   }
@@ -352,11 +349,7 @@ class RequestRepository {
   }) async {
     final res = await client.post(
       '/api/requests/$id/review',
-      body: {
-        'approve': approve,
-        'note': note.trim(),
-        'version': version,
-      },
+      body: {'approve': approve, 'note': note.trim(), 'version': version},
     );
     return WorkRequest.fromJson(res);
   }

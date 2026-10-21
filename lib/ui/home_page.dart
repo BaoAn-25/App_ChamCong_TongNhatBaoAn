@@ -97,10 +97,30 @@ class _HomePageState extends State<HomePage> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            color: const Color(0xFFFFEFCF),
-            child: const Text(
-              'LOCAL • Dữ liệu trên máy này • Email/OTP đang mô phỏng',
-              style: TextStyle(fontSize: 12),
+            color: const Color(0xFFE8F5E9),
+            child: Row(
+              children: [
+                const Icon(Icons.cloud_done, size: 16, color: Color(0xFF2E7D32)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'MÁY CHỦ • ĐÃ KẾT NỐI API (${c.client.baseUrl}) • DỮ LIỆU THẬT',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2E7D32),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                InkWell(
+                  onTap: () => c.syncAll(),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.refresh, size: 18, color: Color(0xFF2E7D32)),
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -1019,12 +1039,19 @@ class OfficeQrDialog extends StatefulWidget {
 
 class _OfficeQrDialogState extends State<OfficeQrDialog> {
   Timer? timer;
+  String? serverQr;
   @override
   void initState() {
     super.initState();
-    timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
+    _fetch();
+    timer = Timer.periodic(const Duration(seconds: 30), (_) => _fetch());
+  }
+
+  Future<void> _fetch() async {
+    try {
+      final code = await widget.controller.fetchServerQr();
+      if (mounted) setState(() => serverQr = code);
+    } catch (_) {}
   }
 
   @override
@@ -1036,7 +1063,7 @@ class _OfficeQrDialogState extends State<OfficeQrDialog> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now(),
-        code = widget.controller.officeQr(DateTime.now());
+        code = serverQr ?? widget.controller.officeQr(now);
     return AlertDialog(
       title: Text(widget.controller.data.office.name),
       content: SizedBox(
@@ -1046,21 +1073,22 @@ class _OfficeQrDialogState extends State<OfficeQrDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               QrImageView(data: code, size: 240, backgroundColor: Colors.white),
-              Text('Đổi mã sau ${60 - now.second} giây'),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               const Text(
-                'Local: dùng mã trên cùng bộ dữ liệu. Chưa thể dùng mã giữa hai máy cài độc lập.',
+                'Mã QR động được ký số trực tiếp từ Server API. Hết hạn sau mỗi 1-2 phút.',
                 textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.blueGrey),
               ),
+              const SizedBox(height: 12),
               TextButton.icon(
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: code));
                   if (context.mounted) {
-                    message(context, 'Đã sao chép mã thử nghiệm.');
+                    message(context, 'Đã sao chép mã QR server.');
                   }
                 },
                 icon: const Icon(Icons.copy),
-                label: const Text('Sao chép mã để thử trên một máy'),
+                label: const Text('Sao chép mã QR này'),
               ),
             ],
           ),

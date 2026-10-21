@@ -144,8 +144,8 @@ class _PunchPageState extends State<PunchPage> {
                     ? null
                     : () => editForm(
                         context,
-                        title: 'Nhập mã thử nghiệm local',
-                        fields: {'Mã đã sao chép từ Admin': ''},
+                        title: 'Nhập mã QR thủ công',
+                        fields: {'Mã QR': ''},
                         save: (v) async {
                           if (v.values.first.isEmpty) {
                             throw ArgumentError('Hãy nhập mã.');
@@ -153,7 +153,7 @@ class _PunchPageState extends State<PunchPage> {
                           setState(() => qr = v.values.first);
                         },
                       ),
-                child: const Text('Demo một máy: dán mã Admin'),
+                child: const Text('Nhập mã QR nếu camera không quét được'),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(

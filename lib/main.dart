@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
-import 'data/local_store.dart';
 import 'domain/app_controller.dart';
 import 'ui/auth_page.dart';
 import 'ui/home_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(AttendanceApp(controller: AppController(LocalStore())));
+  runApp(AttendanceApp(controller: AppController.createDefault()));
 }
 
 class AttendanceApp extends StatefulWidget {

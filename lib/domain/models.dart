@@ -1,13 +1,17 @@
 import 'dart:math';
 
 typedef Json = Map<String, dynamic>;
+
 String newId() =>
     '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+
 String dayKey(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
 String clock(DateTime? d) => d == null
     ? '—'
     : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
 String dateLabel(DateTime d) => '${d.day}/${d.month}/${d.year}';
 
 class Employee {
@@ -15,6 +19,7 @@ class Employee {
   String name, email, username, department, role, passwordHash, salt;
   String? shiftId;
   bool active;
+
   Employee({
     required this.id,
     required this.name,
@@ -27,7 +32,9 @@ class Employee {
     this.shiftId,
     this.active = true,
   });
+
   bool get isAdmin => role == 'admin';
+
   Json toJson() => {
     'id': id,
     'name': name,
@@ -40,17 +47,18 @@ class Employee {
     'shiftId': shiftId,
     'active': active,
   };
+
   factory Employee.fromJson(Json j) => Employee(
-    id: j['id'],
-    name: j['name'],
-    email: j['email'],
-    username: j['username'],
-    department: j['department'],
-    role: j['role'],
-    passwordHash: j['passwordHash'],
-    salt: j['salt'],
-    shiftId: j['shiftId'],
-    active: j['active'],
+    id: j['id']?.toString() ?? '',
+    name: j['name']?.toString() ?? '',
+    email: j['email']?.toString() ?? '',
+    username: j['username']?.toString() ?? '',
+    department: j['department']?.toString() ?? '',
+    role: j['role']?.toString() ?? 'employee',
+    passwordHash: j['passwordHash']?.toString() ?? '',
+    salt: j['salt']?.toString() ?? '',
+    shiftId: j['shiftId']?.toString(),
+    active: j['active'] as bool? ?? true,
   );
 }
 
@@ -58,6 +66,7 @@ class Shift {
   final String id;
   String name;
   int startMinute, endMinute, grace;
+
   Shift({
     required this.id,
     required this.name,
@@ -65,26 +74,30 @@ class Shift {
     required this.endMinute,
     this.grace = 5,
   });
+
   DateTime startOn(DateTime d) =>
       DateTime(d.year, d.month, d.day).add(Duration(minutes: startMinute));
+
   DateTime endOn(DateTime d) => DateTime(
     d.year,
     d.month,
     d.day,
   ).add(Duration(minutes: endMinute + (endMinute <= startMinute ? 1440 : 0)));
+
   Json toJson() => {
     'id': id,
     'name': name,
-    'start': startMinute,
-    'end': endMinute,
+    'startMinute': startMinute,
+    'endMinute': endMinute,
     'grace': grace,
   };
+
   factory Shift.fromJson(Json j) => Shift(
-    id: j['id'],
-    name: j['name'],
-    startMinute: j['start'],
-    endMinute: j['end'],
-    grace: j['grace'],
+    id: j['id']?.toString() ?? '',
+    name: j['name']?.toString() ?? '',
+    startMinute: (j['startMinute'] ?? j['start'] ?? 0) as int,
+    endMinute: (j['endMinute'] ?? j['end'] ?? 0) as int,
+    grace: (j['grace'] ?? 5) as int,
   );
 }
 
@@ -95,6 +108,8 @@ class Attendance {
   final double latitude, longitude, accuracy;
   DateTime? checkOut;
   double? outLatitude, outLongitude;
+  String? employeeName;
+
   Attendance({
     required this.id,
     required this.employeeId,
@@ -108,7 +123,9 @@ class Attendance {
     this.checkOut,
     this.outLatitude,
     this.outLongitude,
+    this.employeeName,
   });
+
   String get explanation {
     final items = <String>[];
     if (lateMinutes > 0) {
@@ -129,6 +146,7 @@ class Attendance {
 
   double get hours =>
       checkOut == null ? 0 : checkOut!.difference(checkIn).inMinutes / 60;
+
   Json toJson() => {
     'id': id,
     'employeeId': employeeId,
@@ -142,20 +160,23 @@ class Attendance {
     'checkOut': checkOut?.toIso8601String(),
     'outLatitude': outLatitude,
     'outLongitude': outLongitude,
+    'employeeName': employeeName,
   };
+
   factory Attendance.fromJson(Json j) => Attendance(
-    id: j['id'],
-    employeeId: j['employeeId'],
-    shiftName: j['shiftName'],
-    checkIn: DateTime.parse(j['checkIn']),
-    scheduledEnd: DateTime.parse(j['scheduledEnd']),
-    lateMinutes: j['lateMinutes'],
+    id: j['id']?.toString() ?? '',
+    employeeId: j['employeeId']?.toString() ?? '',
+    shiftName: j['shiftName']?.toString() ?? '',
+    checkIn: DateTime.parse(j['checkIn']).toLocal(),
+    scheduledEnd: DateTime.parse(j['scheduledEnd']).toLocal(),
+    lateMinutes: (j['lateMinutes'] ?? 0) as int,
     latitude: (j['latitude'] as num).toDouble(),
     longitude: (j['longitude'] as num).toDouble(),
     accuracy: (j['accuracy'] as num).toDouble(),
-    checkOut: j['checkOut'] == null ? null : DateTime.parse(j['checkOut']),
+    checkOut: j['checkOut'] == null ? null : DateTime.parse(j['checkOut']).toLocal(),
     outLatitude: (j['outLatitude'] as num?)?.toDouble(),
     outLongitude: (j['outLongitude'] as num?)?.toDouble(),
+    employeeName: j['employeeName']?.toString(),
   );
 }
 
@@ -163,6 +184,9 @@ class WorkRequest {
   final String id, employeeId;
   String type, reason, status, reviewerNote;
   DateTime from, to;
+  int? version;
+  String? employeeName;
+
   WorkRequest({
     required this.id,
     required this.employeeId,
@@ -172,7 +196,10 @@ class WorkRequest {
     required this.to,
     this.status = 'pending',
     this.reviewerNote = '',
+    this.version,
+    this.employeeName,
   });
+
   Json toJson() => {
     'id': id,
     'employeeId': employeeId,
@@ -182,16 +209,21 @@ class WorkRequest {
     'to': to.toIso8601String(),
     'status': status,
     'reviewerNote': reviewerNote,
+    'version': version,
+    'employeeName': employeeName,
   };
+
   factory WorkRequest.fromJson(Json j) => WorkRequest(
-    id: j['id'],
-    employeeId: j['employeeId'],
-    type: j['type'],
-    reason: j['reason'],
+    id: j['id']?.toString() ?? '',
+    employeeId: j['employeeId']?.toString() ?? '',
+    type: j['type']?.toString() ?? '',
+    reason: j['reason']?.toString() ?? '',
     from: DateTime.parse(j['from']),
     to: DateTime.parse(j['to']),
-    status: j['status'],
-    reviewerNote: j['reviewerNote'],
+    status: j['status']?.toString() ?? 'pending',
+    reviewerNote: j['reviewerNote']?.toString() ?? '',
+    version: j['version'] as int?,
+    employeeName: j['employeeName']?.toString(),
   );
 }
 
@@ -199,28 +231,36 @@ class Office {
   String name, qrSecret;
   double? latitude, longitude;
   double radius;
+  bool isServerConfigured;
+
   Office({
     this.name = 'Văn phòng',
     this.qrSecret = '',
     this.latitude,
     this.longitude,
     this.radius = 150,
+    this.isServerConfigured = false,
   });
+
   bool get configured =>
-      latitude != null && longitude != null && qrSecret.isNotEmpty;
+      (latitude != null && longitude != null && (qrSecret.isNotEmpty || isServerConfigured));
+
   Json toJson() => {
     'name': name,
     'qrSecret': qrSecret,
     'latitude': latitude,
     'longitude': longitude,
     'radius': radius,
+    'configured': configured,
   };
+
   factory Office.fromJson(Json j) => Office(
-    name: j['name'],
-    qrSecret: j['qrSecret'],
+    name: j['name']?.toString() ?? 'Văn phòng',
+    qrSecret: j['qrSecret']?.toString() ?? '',
     latitude: (j['latitude'] as num?)?.toDouble(),
     longitude: (j['longitude'] as num?)?.toDouble(),
-    radius: (j['radius'] as num).toDouble(),
+    radius: (j['radius'] as num?)?.toDouble() ?? 150,
+    isServerConfigured: j['configured'] as bool? ?? (j['latitude'] != null && j['longitude'] != null),
   );
 }
 
@@ -230,6 +270,7 @@ class AppData {
   List<Attendance> attendance;
   List<WorkRequest> requests;
   Office office;
+
   AppData({
     List<Employee>? employees,
     List<Shift>? shifts,
@@ -241,6 +282,7 @@ class AppData {
        attendance = attendance ?? [],
        requests = requests ?? [],
        office = office ?? Office();
+
   Json toJson() => {
     'version': 1,
     'employees': employees.map((e) => e.toJson()).toList(),
@@ -249,22 +291,26 @@ class AppData {
     'requests': requests.map((r) => r.toJson()).toList(),
     'office': office.toJson(),
   };
+
   factory AppData.fromJson(Json j) {
-    if (j['version'] != 1) {
-      throw const FormatException('Phiên bản dữ liệu chưa được hỗ trợ.');
-    }
     return AppData(
-      employees: (j['employees'] as List)
-          .map((e) => Employee.fromJson(e))
-          .toList(),
-      shifts: (j['shifts'] as List).map((e) => Shift.fromJson(e)).toList(),
-      attendance: (j['attendance'] as List)
-          .map((e) => Attendance.fromJson(e))
-          .toList(),
-      requests: (j['requests'] as List)
-          .map((e) => WorkRequest.fromJson(e))
-          .toList(),
-      office: Office.fromJson(j['office']),
+      employees: (j['employees'] as List?)
+              ?.map((e) => Employee.fromJson(e))
+              .toList() ??
+          [],
+      shifts: (j['shifts'] as List?)
+              ?.map((e) => Shift.fromJson(e))
+              .toList() ??
+          [],
+      attendance: (j['attendance'] as List?)
+              ?.map((e) => Attendance.fromJson(e))
+              .toList() ??
+          [],
+      requests: (j['requests'] as List?)
+              ?.map((e) => WorkRequest.fromJson(e))
+              .toList() ??
+          [],
+      office: j['office'] != null ? Office.fromJson(j['office']) : Office(),
     );
   }
 }

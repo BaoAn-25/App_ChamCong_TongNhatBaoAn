@@ -140,6 +140,7 @@ public class OtpService(AppDb db, IConfiguration cfg, ILogger<OtpService> log)
             using var client = new SmtpClient(host, int.Parse(cfg["Smtp:Port"] ?? "587"))
             {
                 EnableSsl = true,
+                Timeout = 5000,
                 Credentials = new NetworkCredential(cfg["Smtp:User"], cfg["Smtp:Password"])
             };
             var from = cfg["Smtp:From"] ?? cfg["Smtp:User"]!;
@@ -149,8 +150,11 @@ public class OtpService(AppDb db, IConfiguration cfg, ILogger<OtpService> log)
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Gửi email OTP thất bại tới {To}.", to);
-            throw new InvalidOperationException("Không gửi được email. Vui lòng thử lại sau.");
+            log.LogWarning(ex, "Gửi email OTP thất bại tới {To}.", to);
+            if (!DebugReturn)
+            {
+                throw new InvalidOperationException("Không gửi được email từ máy chủ cloud (cổng 587 bị chặn). Hãy bật Auth__DebugReturnOtp=true trên Render.");
+            }
         }
     }
 }

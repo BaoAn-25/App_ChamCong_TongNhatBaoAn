@@ -1,0 +1,23 @@
+name: Backend build
+
+on:
+  push:
+    paths:
+      - "WebAPI_TongNhatBaoAn/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "WebAPI_TongNhatBaoAn/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: WebAPI_TongNhatBaoAn
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build -c Release

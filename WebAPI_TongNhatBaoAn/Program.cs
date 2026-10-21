@@ -21,7 +21,8 @@ var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrEmpty(jwtKey) || jwtKey.Length < 32)
     throw new InvalidOperationException("Jwt__Key phải có ít nhất 32 ký tự.");
 
-builder.Services.AddDbContext<AppDb>(o => o.UseNpgsql(connectionString));
+builder.Services.AddDbContext<AppDb>(o => o.UseNpgsql(connectionString,
+    npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 4, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.AddSingleton<QrService>();

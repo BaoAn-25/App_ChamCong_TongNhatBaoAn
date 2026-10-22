@@ -1328,7 +1328,7 @@ class _HomePageState extends State<HomePage> {
       ),
       Section(
         title: 'Ca làm việc',
-        subtitle: 'Hỗ trợ ca trong ngày và ca qua đêm',
+        subtitle: 'Chạm vào ca để xem danh sách nhân sự đang phân ca',
         action: c.isAdmin
             ? IconButton(
                 tooltip: 'Thêm ca',
@@ -1339,42 +1339,143 @@ class _HomePageState extends State<HomePage> {
         child: c.data.shifts.isEmpty
             ? const EmptyState('Chưa có ca làm nào.')
             : Column(
-                children: c.data.shifts
-                    .map(
-                      (s) => ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.schedule),
-                        title: Text(s.name),
-                        subtitle: Text(
-                          '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Cho phép trễ ${s.grace} phút${s.endMinute < s.startMinute ? ' • Qua đêm' : ''}',
+                children: c.data.shifts.map((s) {
+                  final assignedEmps = c.data.employees
+                      .where((e) => e.shiftId == s.id)
+                      .toList();
+                  final count = assignedEmps.length;
+
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    onTap: () => showShiftDetails(s, assignedEmps),
+                    leading: CircleAvatar(
+                      backgroundColor: count > 0
+                          ? const Color(0xFFE0F2FE)
+                          : const Color(0xFFF1F5F9),
+                      child: Icon(
+                        Icons.schedule,
+                        color: count > 0
+                            ? const Color(0xFF0284C7)
+                            : const Color(0xFF94A3B8),
+                      ),
+                    ),
+                    title: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            s.name,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        trailing: !c.isAdmin
-                            ? null
-                            : PopupMenuButton<String>(
-                                onSelected: (v) async {
-                                  if (v == 'edit') {
-                                    editShift(s);
-                                  } else if (await confirm(
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: count > 0
+                                ? const Color(0xFFE0F2FE)
+                                : const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: count > 0
+                                  ? const Color(0xFFBAE6FD)
+                                  : const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          child: Text(
+                            count > 0 ? '$count người làm' : '0 người',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: count > 0
+                                  ? const Color(0xFF0369A1)
+                                  : const Color(0xFF64748B),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Text(
+                      '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Cho phép trễ ${s.grace} phút${s.endMinute < s.startMinute ? ' • Qua đêm' : ''}',
+                    ),
+                    trailing: !c.isAdmin
+                        ? null
+                        : PopupMenuButton<String>(
+                            onSelected: (v) async {
+                              if (v == 'edit') {
+                                editShift(s);
+                              } else if (v == 'delete') {
+                                if (count == 0) {
+                                  if (await confirm(
                                     context,
                                     'Xóa ca ${s.name}?',
                                   )) {
                                     await perform(() => c.deleteShift(s.id));
                                   }
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Sửa'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text('Xóa'),
-                                  ),
-                                ],
+                                } else {
+                                  final names = assignedEmps
+                                      .map(
+                                        (e) =>
+                                            '• ${e.name} (${e.department.isEmpty ? "Chưa có phòng ban" : e.department})',
+                                      )
+                                      .join('\n');
+                                  final forceDelete = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(24),
+                                      ),
+                                      title: Text(
+                                        'Ca ${s.name} đang có $count người làm',
+                                      ),
+                                      content: Text(
+                                        'Ca này hiện đang được phân công cho các nhân viên:\n\n'
+                                        '$names\n\n'
+                                        'Nếu xóa, hệ thống sẽ tự động gỡ phân ca cho $count nhân viên trên.\n\n'
+                                        'Bạn có chắc chắn muốn gỡ phân ca và xóa ca này không?',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, false),
+                                          child: const Text('Hủy'),
+                                        ),
+                                        FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: Colors.red,
+                                          ),
+                                          onPressed: () =>
+                                              Navigator.pop(context, true),
+                                          child: const Text('Gỡ & Xóa ca'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (forceDelete == true) {
+                                    await perform(
+                                      () => c.deleteShift(s.id, force: true),
+                                      'Đã gỡ phân ca và xóa ca thành công!',
+                                    );
+                                  }
+                                }
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Sửa'),
                               ),
-                      ),
-                    )
-                    .toList(),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Xóa'),
+                              ),
+                            ],
+                          ),
+                  );
+                }).toList(),
               ),
       ),
       Section(
@@ -1621,6 +1722,129 @@ class _HomePageState extends State<HomePage> {
       throw ArgumentError('Giờ không hợp lệ.');
     }
     return h * 60 + m;
+  }
+
+  void showShiftDetails(Shift s, List<Employee> assignedEmps) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            const Icon(Icons.schedule, color: Color(0xFF087F8C)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                s.name,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Khung giờ: ${minuteText(s.startMinute)} – ${minuteText(s.endMinute)}'
+                '${s.endMinute < s.startMinute ? ' (Ca qua đêm)' : ''}',
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Cho phép trễ tối đa: ${s.grace} phút',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+              ),
+              const Divider(height: 24),
+              Row(
+                children: [
+                  const Icon(Icons.people_outline, size: 18, color: Color(0xFF087F8C)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Nhân viên đang phân ca (${assignedEmps.length}):',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (assignedEmps.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Chưa có nhân viên nào được phân vào ca này.',
+                    style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                  ),
+                )
+              else
+                for (final e in assignedEmps)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 14,
+                          backgroundColor: e.isAdmin
+                              ? Colors.deepPurple.shade50
+                              : e.isManager
+                              ? Colors.cyan.shade50
+                              : const Color(0xFFE0F2FE),
+                          child: Icon(
+                            e.isAdmin
+                                ? Icons.shield_outlined
+                                : e.isManager
+                                ? Icons.supervisor_account_outlined
+                                : Icons.person_outline,
+                            size: 14,
+                            color: e.isAdmin
+                                ? Colors.deepPurple
+                                : e.isManager
+                                ? Colors.cyan.shade800
+                                : const Color(0xFF0284C7),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                e.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                '${e.username} • ${e.department.isEmpty ? "Chưa có phòng ban" : e.department}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> editShift([Shift? s]) => editForm(

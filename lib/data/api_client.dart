@@ -158,10 +158,15 @@ class ApiClient {
     );
   }
 
-  Future<dynamic> delete(String path, {dynamic body, bool auth = true}) async {
+  Future<dynamic> delete(
+    String path, {
+    dynamic body,
+    Map<String, dynamic>? query,
+    bool auth = true,
+  }) async {
     return _sendWithRetry(
       () => _http.delete(
-        _uri(path),
+        _uri(path, query),
         headers: _headers(auth),
         body: body != null ? jsonEncode(body) : null,
       ),

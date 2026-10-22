@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../data/api_repositories.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'common.dart';
@@ -922,10 +923,7 @@ class _HomePageState extends State<HomePage> {
                       label: 'QR Văn phòng',
                       icon: Icons.qr_code_2_rounded,
                       color: const Color(0xFF7C3AED),
-                      onTap: () => showDialog<void>(
-                        context: context,
-                        builder: (_) => OfficeQrDialog(controller: c),
-                      ),
+                      onTap: showOfficeQr,
                     ),
                     const SizedBox(width: 10),
                     _quickActionItem(
@@ -1359,12 +1357,7 @@ class _HomePageState extends State<HomePage> {
                 label: const Text('Lấy GPS để thiết lập'),
               ),
               OutlinedButton.icon(
-                onPressed: c.data.office.configured
-                    ? () => showDialog<void>(
-                        context: context,
-                        builder: (_) => OfficeQrDialog(controller: c),
-                      )
-                    : null,
+                onPressed: showOfficeQr,
                 icon: const Icon(Icons.qr_code),
                 label: const Text('Hiển thị QR động'),
               ),
@@ -2496,26 +2489,68 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> showOfficeQr() async {
+    if (!c.data.office.configured) {
+      message(
+        context,
+        'Chưa ghim tọa độ văn phòng. Hãy cấu hình tên, GPS và bán kính trước.',
+      );
+      await editOffice();
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) =>
+          OfficeQrDialog(controller: c, onEditOffice: editOffice),
+    );
+  }
+
   Future<void> editOffice([Position? position]) async {
     final office = c.data.office;
+    final name = office.name == 'Van phong chinh'
+        ? 'Văn phòng chính'
+        : office.name;
     await editForm(
       context,
-      title: 'Cấu hình văn phòng (GPS thập phân)',
+      title: 'Cấu hình văn phòng chấm công',
       fields: {
-        'Tên văn phòng': office.name,
+        'Tên văn phòng': name,
         'Vĩ độ': (position?.latitude ?? office.latitude)?.toString() ?? '',
         'Kinh độ': (position?.longitude ?? office.longitude)?.toString() ?? '',
         'Bán kính (m)': '${office.radius.round()}',
       },
-      save: (v) => c.saveOffice(
-        Office(
-          name: v['Tên văn phòng']!,
-          latitude: double.tryParse(v['Vĩ độ']!),
-          longitude: double.tryParse(v['Kinh độ']!),
-          radius: double.tryParse(v['Bán kính (m)']!) ?? 0,
-          qrSecret: office.qrSecret,
-        ),
-      ),
+      save: (v) {
+        final lat = double.tryParse(v['Vĩ độ']!.replaceAll(',', '.'));
+        final lng = double.tryParse(v['Kinh độ']!.replaceAll(',', '.'));
+        final radius = double.tryParse(
+          v['Bán kính (m)']!.replaceAll(',', '.'),
+        );
+        final officeName = v['Tên văn phòng']!.trim();
+        if (officeName.isEmpty) {
+          throw ArgumentError('Nhập tên văn phòng.');
+        }
+        if (lat == null ||
+            lng == null ||
+            lat.abs() > 90 ||
+            lng.abs() > 180) {
+          throw ArgumentError(
+            'Nhập vĩ độ/kinh độ thập phân hợp lệ, hoặc bấm Lấy GPS để thiết lập.',
+          );
+        }
+        if (radius == null || radius < 20 || radius > 5000) {
+          throw ArgumentError('Bán kính phải từ 20 đến 5000 mét.');
+        }
+        return c.saveOffice(
+          Office(
+            name: officeName,
+            latitude: lat,
+            longitude: lng,
+            radius: radius,
+            qrSecret: office.qrSecret,
+          ),
+        );
+      },
     );
   }
 
@@ -3174,26 +3209,73 @@ class _HomePageState extends State<HomePage> {
 
 class OfficeQrDialog extends StatefulWidget {
   final AppController controller;
-  const OfficeQrDialog({super.key, required this.controller});
+  final Future<void> Function([Position?])? onEditOffice;
+  const OfficeQrDialog({
+    super.key,
+    required this.controller,
+    this.onEditOffice,
+  });
   @override
   State<OfficeQrDialog> createState() => _OfficeQrDialogState();
 }
 
 class _OfficeQrDialogState extends State<OfficeQrDialog> {
   Timer? timer;
-  String? serverQr;
+  OfficeQrTicket? ticket;
+  String? error;
+  bool loading = true;
+  bool rotating = false;
+  bool fetching = false;
+
+  AppController get c => widget.controller;
+
   @override
   void initState() {
     super.initState();
     _fetch();
-    timer = Timer.periodic(const Duration(seconds: 30), (_) => _fetch());
+    timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
-  Future<void> _fetch() async {
+  Future<void> _fetch({bool rotate = false}) async {
+    if (fetching && !rotate) return;
+    fetching = true;
+    setState(() {
+      loading = ticket == null;
+      error = null;
+      rotating = rotate;
+    });
     try {
-      final code = await widget.controller.fetchServerQr();
-      if (mounted) setState(() => serverQr = code);
-    } catch (_) {}
+      final next = await c.fetchServerQr(rotate: rotate);
+      if (mounted) setState(() => ticket = next);
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => error = e.toString().replaceFirst(
+            RegExp(r'^(Exception: |StateError: |Bad state: )'),
+            '',
+          ),
+        );
+      }
+    } finally {
+      fetching = false;
+      if (mounted) {
+        setState(() {
+          loading = false;
+          rotating = false;
+        });
+      }
+    }
+  }
+
+  void _tick() {
+    final current = ticket;
+    if (current == null) return;
+    final left = current.expiresAt.difference(DateTime.now().toUtc());
+    if (left <= const Duration(seconds: 15) && !fetching) {
+      _fetch();
+      return;
+    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -3204,34 +3286,122 @@ class _OfficeQrDialogState extends State<OfficeQrDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now(),
-        code = serverQr ?? widget.controller.officeQr(now);
+    final office = c.data.office;
+    final code = ticket?.code;
+    final left = ticket == null
+        ? Duration.zero
+        : ticket!.expiresAt.difference(DateTime.now().toUtc());
+    final seconds = left.isNegative ? 0 : left.inSeconds;
     return AlertDialog(
-      title: Text(widget.controller.data.office.name),
+      title: Text(office.name),
       content: SizedBox(
-        width: 300,
+        width: 320,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              QrImageView(data: code, size: 240, backgroundColor: Colors.white),
-              const SizedBox(height: 8),
-              const Text(
-                'Mã QR động được ký số trực tiếp từ Server API. Hết hạn sau mỗi 1-2 phút.',
+              Text(
+                office.configured
+                    ? 'Bán kính ${office.radius.round()} m • ${office.latitude?.toStringAsFixed(5)}, ${office.longitude?.toStringAsFixed(5)}'
+                    : 'Chưa ghim tọa độ. Chấm công sẽ bị từ chối.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
               ),
               const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: code));
-                  if (context.mounted) {
-                    message(context, 'Đã sao chép mã QR server.');
-                  }
-                },
-                icon: const Icon(Icons.copy),
-                label: const Text('Sao chép mã QR này'),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                )
+              else if (code != null && code.startsWith('BAOAN:'))
+                QrImageView(data: code, size: 240, backgroundColor: Colors.white)
+              else
+                const Text(
+                  'Chưa lấy được mã QR từ server.',
+                  textAlign: TextAlign.center,
+                ),
+              const SizedBox(height: 8),
+              Text(
+                code == null
+                    ? 'Mã QR động do Admin cấu hình văn phòng rồi hiển thị tại đây. Nhân viên quét mã này khi chấm công.'
+                    : 'Còn $seconds giây. Mã đổi theo phút; nhân viên cần quét mã còn hạn.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
               ),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  error!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  TextButton.icon(
+                    onPressed: code == null
+                        ? null
+                        : () async {
+                            await Clipboard.setData(ClipboardData(text: code));
+                            if (context.mounted) {
+                              message(context, 'Đã sao chép mã QR server.');
+                            }
+                          },
+                    icon: const Icon(Icons.copy),
+                    label: const Text('Sao chép mã'),
+                  ),
+                  TextButton.icon(
+                    onPressed: loading ? null : () => _fetch(),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Làm mới QR'),
+                  ),
+                ],
+              ),
+              if (widget.onEditOffice != null)
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        await widget.onEditOffice!();
+                        if (mounted) setState(() {});
+                      },
+                      child: const Text('Sửa tên / bán kính'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          final position = await acquirePosition();
+                          if (!mounted) return;
+                          await widget.onEditOffice!(position);
+                          if (mounted) setState(() {});
+                        } catch (e) {
+                          if (mounted) message(context, e);
+                        }
+                      },
+                      child: const Text('Ghim GPS tại đây'),
+                    ),
+                    TextButton(
+                      onPressed: rotating
+                          ? null
+                          : () async {
+                              if (!await confirm(
+                                context,
+                                'Tạo khóa QR mới? Mã đang hiện sẽ hết hiệu lực ngay, nhân viên phải quét mã mới.',
+                              )) {
+                                return;
+                              }
+                              await _fetch(rotate: true);
+                            },
+                      child: const Text('Đổi khóa QR'),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),

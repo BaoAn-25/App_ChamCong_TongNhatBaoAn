@@ -376,6 +376,16 @@ public class OfficeController(AppDb db, QrService qr) : ApiBase
         if (!o.Configured) return Fail("Chưa cấu hình văn phòng.", 409);
         return Ok(qr.Create(o.QrSecret, DateTime.UtcNow));
     }
+
+    [HttpPost("rotate-qr"), Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> RotateQr()
+    {
+        var o = await GetOfficeAsync();
+        if (!o.Configured) return Fail("Chưa cấu hình văn phòng.", 409);
+        o.QrSecret = QrService.NewSecret();
+        await db.SaveChangesAsync();
+        return Ok(qr.Create(o.QrSecret, DateTime.UtcNow));
+    }
 }
 
 [ApiController, Route("api/attendance"), Authorize]

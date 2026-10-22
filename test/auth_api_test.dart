@@ -66,6 +66,25 @@ void main() {
     },
   );
 
+  test('Office QR ticket keeps code and expiry from the API', () async {
+    final client = ApiClient(
+      httpClient: MockClient((r) async {
+        expect(r.url.path, '/api/office/qr');
+        return http.Response(
+          jsonEncode({
+            'code': 'BAOAN:1:abc',
+            'expiresAt': '2026-10-22T16:05:00Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    final ticket = await OfficeRepository(client).createQr();
+    expect(ticket.code, 'BAOAN:1:abc');
+    expect(ticket.expiresAt.toUtc(), DateTime.utc(2026, 10, 22, 16, 5));
+  });
+
   test('Login challenge keeps the destination email from the API', () async {
     final client = ApiClient(
       httpClient: MockClient(

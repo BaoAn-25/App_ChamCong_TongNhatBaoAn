@@ -44,7 +44,7 @@ public class Department
 public class Office
 {
     public int Id { get; set; } = 1;
-    public string Name { get; set; } = "Văn phòng";
+    public string Name { get; set; } = "Văn phòng chính";
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
     public double Radius { get; set; } = 150;

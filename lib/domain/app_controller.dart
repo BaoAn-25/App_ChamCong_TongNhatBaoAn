@@ -25,7 +25,8 @@ class AppController extends ChangeNotifier {
   String? pendingUsername;
   String? pendingEmail;
   String? demoOtp;
-  String? currentServerQr;
+  OfficeQrTicket? currentServerQrTicket;
+  String? get currentServerQr => currentServerQrTicket?.code;
 
   bool _loading = false;
   bool get isLoading => _loading;
@@ -412,12 +413,14 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String> fetchServerQr() async {
+  Future<OfficeQrTicket> fetchServerQr({bool rotate = false}) async {
     requireAdmin();
-    final code = await officeRepo.createQr();
-    currentServerQr = code;
+    final ticket = rotate
+        ? await officeRepo.rotateQr()
+        : await officeRepo.createQr();
+    currentServerQrTicket = ticket;
     notifyListeners();
-    return code;
+    return ticket;
   }
 
   String officeQr(DateTime now) {

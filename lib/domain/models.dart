@@ -269,7 +269,7 @@ class Office {
   bool isServerConfigured;
 
   Office({
-    this.name = 'Văn phòng',
+    this.name = 'Văn phòng chính',
     this.qrSecret = '',
     this.latitude,
     this.longitude,

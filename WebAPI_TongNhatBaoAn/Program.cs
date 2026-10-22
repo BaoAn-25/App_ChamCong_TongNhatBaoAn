@@ -146,8 +146,11 @@ static async Task SeedAsync(AppDb db, IConfiguration cfg)
 {
     await EnsureDepartmentsTableAsync(db);
 
-    if (await db.Offices.FindAsync(1) == null)
-        db.Offices.Add(new Office { QrSecret = QrService.NewSecret() });
+    var office = await db.Offices.FindAsync(1);
+    if (office == null)
+        db.Offices.Add(new Office { Name = "Văn phòng chính", QrSecret = QrService.NewSecret() });
+    else if (office.Name == "Van phong chinh")
+        office.Name = "Văn phòng chính";
 
     if (!await db.Departments.AnyAsync())
     {

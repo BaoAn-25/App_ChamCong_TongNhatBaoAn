@@ -296,9 +296,30 @@ class OfficeRepository {
     return Office.fromJson(res);
   }
 
-  Future<String> createQr() async {
+  Future<OfficeQrTicket> createQr() async {
     final res = await client.post('/api/office/qr');
-    return res['code'] as String;
+    return OfficeQrTicket.fromJson(res);
+  }
+
+  Future<OfficeQrTicket> rotateQr() async {
+    final res = await client.post('/api/office/rotate-qr');
+    return OfficeQrTicket.fromJson(res);
+  }
+}
+
+class OfficeQrTicket {
+  final String code;
+  final DateTime expiresAt;
+  const OfficeQrTicket({required this.code, required this.expiresAt});
+
+  factory OfficeQrTicket.fromJson(Map<String, dynamic> res) {
+    final raw = res['expiresAt']?.toString();
+    return OfficeQrTicket(
+      code: res['code']?.toString() ?? '',
+      expiresAt: raw == null || raw.isEmpty
+          ? DateTime.now().toUtc().add(const Duration(minutes: 1))
+          : DateTime.parse(raw).toUtc(),
+    );
   }
 }
 

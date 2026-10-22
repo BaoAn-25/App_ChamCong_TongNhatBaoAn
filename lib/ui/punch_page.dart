@@ -23,6 +23,8 @@ class _PunchPageState extends State<PunchPage> {
   bool? enrolled;
   bool reconcile = false;
   String? error, result, gpsDetail;
+  Position? _freshGps;
+  DateTime? _freshGpsAt;
   int step = -1;
   final done = <int>{};
   AppController get c => widget.controller;
@@ -110,7 +112,15 @@ class _PunchPageState extends State<PunchPage> {
     if (mounted) await _loadFace();
   }
 
-  Future<Position> _gps() async {
+  Future<Position> _gps({bool force = false}) async {
+    final cached = _freshGps;
+    final cachedAt = _freshGpsAt;
+    if (!force &&
+        cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < const Duration(seconds: 40)) {
+      return cached;
+    }
     final p = await acquirePosition();
     if (!mounted) throw StateError('Đã rời màn chấm công.');
     final office = c.data.office;
@@ -139,9 +149,13 @@ class _PunchPageState extends State<PunchPage> {
     }
     if (distance > office.radius) {
       throw StateError(
-        'Ngoài bán kính văn phòng. Cần đến gần thêm ${(distance - office.radius).ceil()} m.',
+        distance > 2000
+            ? 'Bạn cách điểm văn phòng trên hệ thống ${distance.round()} m. Tọa độ đang lưu rất lệch chỗ bạn đứng. Admin hãy mở QR văn phòng → Cấu hình → Lấy GPS tại chỗ làm thật, rồi thử lại.'
+            : 'Ngoài bán kính văn phòng. Cần đến gần thêm ${(distance - office.radius).ceil()} m.',
       );
     }
+    _freshGps = p;
+    _freshGpsAt = DateTime.now();
     return p;
   }
 
@@ -226,8 +240,10 @@ class _PunchPageState extends State<PunchPage> {
         step = 0;
         done.remove(0);
       });
-      // Verification may outlive the server's 60-second GPS freshness window.
-      p = await _gps();
+      final gpsAge = _freshGpsAt == null
+          ? const Duration(days: 1)
+          : DateTime.now().difference(_freshGpsAt!);
+      p = await _gps(force: gpsAge > const Duration(seconds: 40));
       if (!mounted) return;
       setState(() {
         done.add(0);

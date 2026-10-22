@@ -8,6 +8,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
 {
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Shift> Shifts => Set<Shift>();
+    public DbSet<Department> Departments => Set<Department>();
     public DbSet<Office> Offices => Set<Office>();
     public DbSet<Attendance> Attendance => Set<Attendance>();
     public DbSet<WorkRequest> WorkRequests => Set<WorkRequest>();

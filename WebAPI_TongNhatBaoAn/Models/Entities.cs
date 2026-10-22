@@ -33,6 +33,14 @@ public class Shift
     public int Grace { get; set; } = 5;
 }
 
+public class Department
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "";
+    public string? Description { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class Office
 {
     public int Id { get; set; } = 1;

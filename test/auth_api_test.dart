@@ -86,55 +86,51 @@ void main() {
     );
   });
 
-  testWidgets(
-    'Registration form closes before OTP opens, then resend and verify work',
-    (tester) async {
-      final api = ApiClient();
-      final auth = FakeAuth(api);
-      final controller = AppController.withServices(
-        apiClient: api,
-        authService: auth,
-      );
-      await tester.pumpWidget(
-        MaterialApp(home: AuthPage(controller: controller)),
-      );
-      final register = find.text('Chưa có tài khoản? Đăng ký nhân viên mới');
-      await tester.ensureVisible(register);
-      await tester.tap(register);
-      await tester.pumpAndSettle();
-      final fields = find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.byType(TextField),
-      );
-      for (var i = 0; i < 4; i++) {
-        await tester.enterText(
-          fields.at(i),
-          ['Tester', 'test@example.com', 'tester', 'password123'][i],
-        );
-      }
-      await tester.tap(find.text('Lưu'));
-      await tester.pumpAndSettle();
-      expect(find.text('Xác minh Email đăng ký'), findsOneWidget);
-      expect(find.text('Đăng ký tài khoản nhân viên'), findsNothing);
-      expect(auth.registrations, 1);
-      await tester.tap(find.text('Gửi lại OTP'));
-      await tester.pumpAndSettle();
-      expect(auth.registrations, 2);
+  testWidgets('Registration tab moves to OTP, then resend and verify work', (
+    tester,
+  ) async {
+    final api = ApiClient();
+    final auth = FakeAuth(api);
+    final controller = AppController.withServices(
+      apiClient: api,
+      authService: auth,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: AuthPage(controller: controller)),
+    );
+    await tester.tap(find.text('Đăng ký').first);
+    await tester.pumpAndSettle();
+    final fields = find.byType(TextField);
+    for (var i = 0; i < 5; i++) {
       await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        '123456',
+        fields.at(i),
+        [
+          'Tester',
+          'test@example.com',
+          'tester',
+          'password123',
+          'password123',
+        ][i],
       );
-      await tester.tap(find.text('Xác nhận'));
-      await tester.pumpAndSettle();
-      expect(auth.verifiedChallenge, 'challenge-2');
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(tester.takeException(), isNull);
-      await tester.pump(const Duration(seconds: 1));
-    },
-  );
+    }
+    await tester.ensureVisible(find.text('Đăng ký tài khoản'));
+    await tester.tap(find.text('Đăng ký tài khoản'));
+    await tester.pumpAndSettle();
+    expect(find.text('Xác minh Email đăng ký'), findsOneWidget);
+    expect(auth.registrations, 1);
+    await tester.ensureVisible(find.text('Gửi lại mã OTP'));
+    await tester.tap(find.text('Gửi lại mã OTP'));
+    await tester.pumpAndSettle();
+    expect(auth.registrations, 2);
+    await tester.enterText(find.byType(TextField), '123456');
+    await tester.ensureVisible(find.text('Xác nhận & Hoàn tất đăng ký'));
+    await tester.tap(find.text('Xác nhận & Hoàn tất đăng ký'));
+    await tester.pumpAndSettle();
+    expect(auth.verifiedChallenge, 'challenge-2');
+    expect(find.text('Xác minh Email đăng ký'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
 
 class FakeAuth extends AuthService {

@@ -91,6 +91,27 @@ namespace WebAPI_TongNhatBaoAn.Data.Migrations
                     b.ToTable("Attendance");
                 });
 
+            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Department", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Departments");
+                });
+
             modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Employee", b =>
                 {
                     b.Property<Guid>("Id")

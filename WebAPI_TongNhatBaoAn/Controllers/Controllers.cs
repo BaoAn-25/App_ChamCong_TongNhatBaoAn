@@ -269,6 +269,63 @@ public class ShiftsController(AppDb db) : ApiBase
     }
 }
 
+[ApiController, Route("api/departments"), Authorize]
+public class DepartmentsController(AppDb db) : ApiBase
+{
+    [HttpGet]
+    public async Task<IActionResult> List() =>
+        Ok(await db.Departments.OrderBy(d => d.Name).Select(d => DepartmentDto.From(d)).ToListAsync());
+
+    [HttpPost, Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> Create(DepartmentUpsert r)
+    {
+        var name = (r.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name)) return Fail("Tên phòng ban không được để trống.");
+        if (await db.Departments.AnyAsync(d => d.Name.ToLower() == name.ToLower()))
+            return Fail("Phòng ban này đã tồn tại.", 409);
+        var d = new Department { Name = name, Description = r.Description?.Trim() };
+        db.Departments.Add(d);
+        await db.SaveChangesAsync();
+        return Created($"/api/departments/{d.Id}", DepartmentDto.From(d));
+    }
+
+    [HttpPatch("{id:guid}"), Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> Update(Guid id, DepartmentUpsert r)
+    {
+        var name = (r.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name)) return Fail("Tên phòng ban không được để trống.");
+        var d = await db.Departments.FindAsync(id);
+        if (d == null) return Fail("Không tìm thấy phòng ban.", 404);
+        if (await db.Departments.AnyAsync(x => x.Id != id && x.Name.ToLower() == name.ToLower()))
+            return Fail("Tên phòng ban đã trùng với phòng ban khác.", 409);
+
+        var oldName = d.Name;
+        d.Name = name;
+        d.Description = r.Description?.Trim();
+
+        if (oldName != name)
+        {
+            var emps = await db.Employees.Where(e => e.Department == oldName).ToListAsync();
+            foreach (var e in emps) e.Department = name;
+        }
+
+        await db.SaveChangesAsync();
+        return Ok(DepartmentDto.From(d));
+    }
+
+    [HttpDelete("{id:guid}"), Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var d = await db.Departments.FindAsync(id);
+        if (d == null) return Fail("Không tìm thấy phòng ban.", 404);
+        if (await db.Employees.AnyAsync(e => e.Department == d.Name))
+            return Fail($"Phòng ban '{d.Name}' đang có nhân viên trực thuộc. Hãy chuyển phòng ban cho nhân viên trước khi xóa.", 409);
+        db.Departments.Remove(d);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+}
+
 [ApiController, Route("api/office"), Authorize]
 public class OfficeController(AppDb db, QrService qr) : ApiBase
 {
@@ -359,6 +416,7 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
         var anchor = (overnight && local.Hour * 60 + local.Minute < shift.EndMinute ? local.AddDays(-1) : local).Date;
         var start = anchor.AddMinutes(shift.StartMinute);
         var end = anchor.AddMinutes(shift.EndMinute + (shift.EndMinute <= shift.StartMinute ? 1440 : 0));
+        if (local >= end) return Fail("Ca đã kết thúc. Không thể chấm vào; hãy gửi đơn giải trình.", 409);
         var workDate = TimeVn.DayKey(end);
 
         if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.WorkDate == workDate))
@@ -410,6 +468,7 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
     [HttpGet]
     public async Task<IActionResult> List(DateOnly? from, DateOnly? to, Guid? employeeId, int page = 1, int pageSize = 50)
     {
+        if (from != null && to != null && from > to) return Fail("Ngày kết thúc phải từ ngày bắt đầu trở đi.");
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
         var isStaff = User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Manager);
@@ -421,7 +480,7 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
         if (to != null) q = q.Where(a => a.CheckIn < TimeVn.ToUtc(to.Value.AddDays(1).ToDateTime(TimeOnly.MinValue)));
 
         var total = await q.CountAsync();
-        var rows = await q.OrderByDescending(a => a.CheckIn).Skip((page - 1) * pageSize).Take(pageSize)
+        var rows = await q.OrderByDescending(a => a.CheckIn).ThenByDescending(a => a.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Join(db.Employees, a => a.EmployeeId, e => e.Id, (a, e) => new { a, e.Name }).ToListAsync();
         return Ok(new PagedResult<AttendanceDto>(total, page, pageSize, rows.Select(x => ToDto(x.a, x.Name)).ToList()));
     }

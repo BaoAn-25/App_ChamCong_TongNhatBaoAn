@@ -64,6 +64,30 @@ class Employee {
   );
 }
 
+class Department {
+  final String id;
+  String name;
+  String? description;
+
+  Department({
+    required this.id,
+    required this.name,
+    this.description,
+  });
+
+  Json toJson() => {
+    'id': id,
+    'name': name,
+    'description': description,
+  };
+
+  factory Department.fromJson(Json j) => Department(
+    id: j['id']?.toString() ?? '',
+    name: j['name']?.toString() ?? '',
+    description: j['description']?.toString(),
+  );
+}
+
 class Shift {
   final String id;
   String name;
@@ -268,6 +292,7 @@ class Office {
 
 class AppData {
   List<Employee> employees;
+  List<Department> departments;
   List<Shift> shifts;
   List<Attendance> attendance;
   List<WorkRequest> requests;
@@ -275,11 +300,13 @@ class AppData {
 
   AppData({
     List<Employee>? employees,
+    List<Department>? departments,
     List<Shift>? shifts,
     List<Attendance>? attendance,
     List<WorkRequest>? requests,
     Office? office,
   }) : employees = employees ?? [],
+       departments = departments ?? [],
        shifts = shifts ?? [],
        attendance = attendance ?? [],
        requests = requests ?? [],
@@ -288,6 +315,7 @@ class AppData {
   Json toJson() => {
     'version': 1,
     'employees': employees.map((e) => e.toJson()).toList(),
+    'departments': departments.map((d) => d.toJson()).toList(),
     'shifts': shifts.map((s) => s.toJson()).toList(),
     'attendance': attendance.map((a) => a.toJson()).toList(),
     'requests': requests.map((r) => r.toJson()).toList(),
@@ -298,6 +326,10 @@ class AppData {
     return AppData(
       employees: (j['employees'] as List?)
               ?.map((e) => Employee.fromJson(e))
+              .toList() ??
+          [],
+      departments: (j['departments'] as List?)
+              ?.map((d) => Department.fromJson(d))
               .toList() ??
           [],
       shifts: (j['shifts'] as List?)

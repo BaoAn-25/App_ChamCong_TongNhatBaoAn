@@ -31,6 +31,19 @@ builder.Services.AddSingleton<QrService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
 {
     o.MapInboundClaims = false;
+    o.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            var raw = context.Principal?.FindFirst("uid")?.Value;
+            if (!Guid.TryParse(raw, out var uid)) { context.Fail("Invalid user."); return; }
+            var db = context.HttpContext.RequestServices.GetRequiredService<AppDb>();
+            var employee = await db.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == uid);
+            if (employee == null || !employee.Active || !employee.EmailVerified ||
+                employee.Role != context.Principal?.FindFirst("role")?.Value)
+                context.Fail("Account access changed. Sign in again.");
+        }
+    };
     o.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
@@ -72,6 +85,13 @@ if (app.Configuration.GetValue<bool>("RUN_MIGRATIONS"))
     await db.Database.MigrateAsync();
     await SeedAsync(db, app.Configuration);
 }
+else
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDb>();
+    await EnsureDepartmentsTableAsync(db);
+    await SeedAsync(db, app.Configuration);
+}
 
 app.UseForwardedHeaders();
 app.UseSwagger();
@@ -100,10 +120,38 @@ static string NormalizeConnectionString(string value)
            $"Username={Uri.UnescapeDataString(parts[0])};Password={Uri.UnescapeDataString(parts.Length > 1 ? parts[1] : "")};SSL Mode={ssl}";
 }
 
+static async Task EnsureDepartmentsTableAsync(AppDb db)
+{
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""Departments"" (
+                ""Id"" uuid NOT NULL PRIMARY KEY,
+                ""Name"" character varying(100) NOT NULL,
+                ""Description"" text NULL,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT (now() at time zone 'utc')
+            );
+        ");
+    }
+    catch { /* Ignore if already exists */ }
+}
+
 static async Task SeedAsync(AppDb db, IConfiguration cfg)
 {
+    await EnsureDepartmentsTableAsync(db);
+
     if (await db.Offices.FindAsync(1) == null)
         db.Offices.Add(new Office { QrSecret = QrService.NewSecret() });
+
+    if (!await db.Departments.AnyAsync())
+    {
+        db.Departments.AddRange(
+            new Department { Name = "Phòng Kỹ thuật", Description = "Phát triển phần mềm và hạ tầng công nghệ" },
+            new Department { Name = "Phòng Kinh doanh", Description = "Kinh doanh và chăm sóc khách hàng" },
+            new Department { Name = "Phòng Kế toán", Description = "Quản lý tài chính và kế toán" },
+            new Department { Name = "Phòng Nhân sự", Description = "Quản trị nguồn nhân lực và tuyển dụng" }
+        );
+    }
 
     var username = cfg["Seed:AdminUsername"]?.Trim().ToLowerInvariant();
     var email = cfg["Seed:AdminEmail"]?.Trim().ToLowerInvariant();

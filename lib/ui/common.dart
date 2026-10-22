@@ -5,6 +5,7 @@ void message(BuildContext context, Object error) {
     RegExp(r'^(Bad state: |Invalid argument\(s\): )'),
     '',
   );
+  ScaffoldMessenger.of(context).hideCurrentSnackBar();
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
   );
@@ -25,7 +26,7 @@ class Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 380 ? 16 : 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -52,9 +53,10 @@ class Section extends StatelessWidget {
                   ],
                 ),
               ),
-              ?action,
             ],
           ),
+          if (action != null)
+            Padding(padding: const EdgeInsets.only(top: 12), child: action),
           const SizedBox(height: 18),
           child,
         ],
@@ -165,8 +167,35 @@ class _EditDialogState extends State<_EditDialog> {
                     controller: entry.value,
                     obscureText: widget.passwords.contains(entry.key),
                     enabled: !busy,
-                    decoration: InputDecoration(labelText: entry.key),
-                    maxLines: widget.passwords.contains(entry.key) ? 1 : null,
+                    readOnly: entry.key.contains('yyyy-MM-dd'),
+                    onTap: !entry.key.contains('yyyy-MM-dd')
+                        ? null
+                        : () async {
+                            final initial =
+                                DateTime.tryParse(entry.value.text) ??
+                                DateTime.now();
+                            final chosen = await showDatePicker(
+                              context: context,
+                              initialDate: initial,
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime(2100),
+                            );
+                            if (chosen != null && mounted) {
+                              entry.value.text =
+                                  '${chosen.year}-${chosen.month.toString().padLeft(2, '0')}-${chosen.day.toString().padLeft(2, '0')}';
+                            }
+                          },
+                    textInputAction: TextInputAction.next,
+                    keyboardType: entry.key.contains('Email')
+                        ? TextInputType.emailAddress
+                        : TextInputType.text,
+                    decoration: InputDecoration(
+                      labelText: entry.key.replaceAll(' (yyyy-MM-dd)', ''),
+                      suffixIcon: entry.key.contains('yyyy-MM-dd')
+                          ? const Icon(Icons.calendar_today_outlined)
+                          : null,
+                    ),
+                    maxLines: entry.key.toLowerCase().contains('lý do') ? 4 : 1,
                   ),
                 ),
               if (error != null)

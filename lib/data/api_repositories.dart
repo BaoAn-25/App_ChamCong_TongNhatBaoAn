@@ -217,6 +217,42 @@ class ShiftRepository {
   }
 }
 
+class DepartmentRepository {
+  final ApiClient client;
+  DepartmentRepository(this.client);
+
+  Future<List<Department>> list() async {
+    final res = await client.get('/api/departments') as List;
+    return res.map((j) => Department.fromJson(j)).toList();
+  }
+
+  Future<Department> create(Department d) async {
+    final res = await client.post(
+      '/api/departments',
+      body: {
+        'name': d.name.trim(),
+        'description': d.description?.trim(),
+      },
+    );
+    return Department.fromJson(res);
+  }
+
+  Future<Department> update(Department d) async {
+    final res = await client.patch(
+      '/api/departments/${d.id}',
+      body: {
+        'name': d.name.trim(),
+        'description': d.description?.trim(),
+      },
+    );
+    return Department.fromJson(res);
+  }
+
+  Future<void> delete(String id) async {
+    await client.delete('/api/departments/$id');
+  }
+}
+
 class OfficeRepository {
   final ApiClient client;
   OfficeRepository(this.client);
@@ -308,12 +344,27 @@ class AttendanceRepository {
       if (from != null) 'from': dayKey(from),
       if (to != null) 'to': dayKey(to),
       'employeeId': ?employeeId,
-      'page': page,
-      'pageSize': pageSize,
+      'pageSize': pageSize.clamp(1, 100),
     };
-    final res = await client.get('/api/attendance', query: query);
-    final items = (res['items'] as List?) ?? [];
-    return items.map((j) => Attendance.fromJson(j)).toList();
+    final records = <String, Attendance>{};
+    var currentPage = page;
+    while (true) {
+      final res = await client.get(
+        '/api/attendance',
+        query: {...query, 'page': currentPage},
+      );
+      final items = (res['items'] as List?) ?? [];
+      for (final item in items) {
+        final record = Attendance.fromJson(item);
+        records[record.id] = record;
+      }
+      final total = (res['total'] as num?)?.toInt() ?? records.length;
+      if (items.isEmpty || currentPage * (query['pageSize'] as int) >= total) {
+        break;
+      }
+      currentPage++;
+    }
+    return records.values.toList();
   }
 }
 

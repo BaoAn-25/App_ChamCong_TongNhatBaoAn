@@ -19,6 +19,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int page = 0;
+  bool performing = false;
   String search = '', requestFilter = 'all';
   DateTimeRange? historyRange;
   AppController get c => widget.controller;
@@ -34,11 +35,15 @@ class _HomePageState extends State<HomePage> {
     Future<void> Function() work, [
     String success = 'Đã lưu thay đổi.',
   ]) async {
+    if (performing) return;
+    setState(() => performing = true);
     try {
       await work();
       if (mounted) message(context, success);
     } catch (e) {
       if (mounted) message(context, e);
+    } finally {
+      if (mounted) setState(() => performing = false);
     }
   }
 
@@ -79,7 +84,7 @@ class _HomePageState extends State<HomePage> {
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             const Text(
-              'TỐNG NHẬT BẢO AN  /  NHÓM 09',
+              'Chấm công • Nhóm 09',
               style: TextStyle(fontSize: 10, letterSpacing: 1),
             ),
           ],
@@ -92,16 +97,16 @@ class _HomePageState extends State<HomePage> {
                 c.isAdmin
                     ? Icons.shield_outlined
                     : c.user?.role == 'manager'
-                        ? Icons.supervisor_account_outlined
-                        : Icons.badge_outlined,
+                    ? Icons.supervisor_account_outlined
+                    : Icons.badge_outlined,
                 size: 17,
               ),
               label: Text(
                 c.isAdmin
                     ? 'Admin'
                     : c.user?.role == 'manager'
-                        ? 'Quản lý'
-                        : 'Nhân viên',
+                    ? 'Quản lý'
+                    : 'Nhân viên',
               ),
             ),
           ),
@@ -109,33 +114,40 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            color: const Color(0xFFE8F5E9),
-            child: Row(
-              children: [
-                const Icon(Icons.cloud_done, size: 16, color: Color(0xFF2E7D32)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'MÁY CHỦ • ĐÃ KẾT NỐI API (${c.client.baseUrl}) • DỮ LIỆU THẬT',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF2E7D32),
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                InkWell(
-                  onTap: () => c.syncAll(),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 4),
-                    child: Icon(Icons.refresh, size: 18, color: Color(0xFF2E7D32)),
-                  ),
-                ),
-              ],
+          if (performing || c.isSyncing)
+            const LinearProgressIndicator(minHeight: 2),
+          Material(
+            color: c.syncError == null
+                ? const Color(0xFFEDF6F5)
+                : const Color(0xFFFFF3E5),
+            child: ListTile(
+              dense: true,
+              leading: Icon(
+                c.syncError != null
+                    ? Icons.cloud_off_outlined
+                    : c.isSyncing
+                    ? Icons.sync
+                    : Icons.cloud_done_outlined,
+                color: c.syncError == null
+                    ? const Color(0xFF087F8C)
+                    : const Color(0xFF9A5700),
+              ),
+              title: Text(
+                c.isSyncing
+                    ? 'Đang cập nhật dữ liệu…'
+                    : c.syncError ??
+                          (c.lastSyncedAt == null
+                              ? 'Chưa đồng bộ dữ liệu'
+                              : 'Đã cập nhật lúc ${TimeOfDay.fromDateTime(c.lastSyncedAt!).format(context)}'),
+              ),
+              subtitle: c.syncError == null
+                  ? null
+                  : const Text('Đang hiển thị dữ liệu lần tải trước.'),
+              trailing: IconButton(
+                tooltip: 'Tải lại dữ liệu',
+                onPressed: c.isSyncing ? null : c.syncAll,
+                icon: const Icon(Icons.refresh),
+              ),
             ),
           ),
           Expanded(
@@ -174,18 +186,49 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: wide
           ? null
           : NavigationBar(
-              selectedIndex: page,
-              onDestinationSelected: (v) => setState(() {
-                page = v;
-                search = '';
-              }),
-              destinations: List.generate(
-                labels.length,
-                (i) => NavigationDestination(
-                  icon: Icon(icons[i]),
-                  label: labels[i],
+              selectedIndex: page < 3 ? page : 3,
+              onDestinationSelected: (v) async {
+                if (v < 3) {
+                  setState(() {
+                    page = v;
+                    search = '';
+                  });
+                  return;
+                }
+                final chosen = await showModalBottomSheet<int>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (context) => SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final i in [3, 4, 5])
+                          ListTile(
+                            leading: Icon(icons[i]),
+                            title: Text(labels[i]),
+                            selected: page == i,
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => Navigator.pop(context, i),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+                if (chosen != null && mounted) {
+                  setState(() {
+                    page = chosen;
+                    search = '';
+                  });
+                }
+              },
+              destinations: [
+                for (var i = 0; i < 3; i++)
+                  NavigationDestination(icon: Icon(icons[i]), label: labels[i]),
+                NavigationDestination(
+                  icon: const Icon(Icons.grid_view_rounded),
+                  label: page >= 3 ? labels[page] : 'Tiện ích',
                 ),
-              ),
+              ],
             ),
     );
   }
@@ -246,12 +289,52 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget list(List<Widget> children) =>
-      ListView(padding: const EdgeInsets.all(20), children: children);
+  Widget _pageHint(String title, String description, IconData icon) =>
+      Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEAF4F4),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: const Color(0xFF087F8C)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(description),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget list(List<Widget> children) => RefreshIndicator(
+    onRefresh: c.syncAll,
+    child: ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(20),
+      children: children,
+    ),
+  );
 
   Widget dashboard() {
     final today = records
-        .where((a) => dayKey(a.checkIn) == dayKey(DateTime.now()))
+        .where(
+          (a) =>
+              dayKey(a.checkIn.toUtc().add(const Duration(hours: 7))) ==
+              dayKey(DateTime.now().toUtc().add(const Duration(hours: 7))),
+        )
         .toList();
     final pending = c.data.requests
         .where(
@@ -269,8 +352,12 @@ class _HomePageState extends State<HomePage> {
         .toList();
 
     // Ca làm hôm nay của nhân viên hiện tại
-    final myShift = c.data.shifts.where((s) => s.id == c.user!.shiftId).firstOrNull;
-    final myTodayRecord = today.where((a) => a.employeeId == c.user!.id).firstOrNull;
+    final myShift = c.data.shifts
+        .where((s) => s.id == c.user!.shiftId)
+        .firstOrNull;
+    final myTodayRecord = today
+        .where((a) => a.employeeId == c.user!.id)
+        .firstOrNull;
 
     return list([
       // Banner Chào Mừng Hiện Đại
@@ -301,7 +388,9 @@ class _HomePageState extends State<HomePage> {
                   radius: 22,
                   backgroundColor: Colors.white.withValues(alpha: 0.2),
                   child: Text(
-                    c.user!.name.isNotEmpty ? c.user!.name[0].toUpperCase() : 'U',
+                    c.user!.name.isNotEmpty
+                        ? c.user!.name[0].toUpperCase()
+                        : 'U',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -334,20 +423,23 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: c.isAdmin
                         ? Colors.amber.withValues(alpha: 0.25)
                         : c.user?.role == 'manager'
-                            ? Colors.deepPurple.withValues(alpha: 0.25)
-                            : Colors.white.withValues(alpha: 0.2),
+                        ? Colors.deepPurple.withValues(alpha: 0.25)
+                        : Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: c.isAdmin
                           ? Colors.amber
                           : c.user?.role == 'manager'
-                              ? Colors.deepPurple.shade200
-                              : Colors.white54,
+                          ? Colors.deepPurple.shade200
+                          : Colors.white54,
                       width: 1,
                     ),
                   ),
@@ -358,30 +450,30 @@ class _HomePageState extends State<HomePage> {
                         c.isAdmin
                             ? Icons.shield_rounded
                             : c.user?.role == 'manager'
-                                ? Icons.supervisor_account_rounded
-                                : Icons.badge_rounded,
+                            ? Icons.supervisor_account_rounded
+                            : Icons.badge_rounded,
                         size: 14,
                         color: c.isAdmin
                             ? Colors.amber
                             : c.user?.role == 'manager'
-                                ? Colors.deepPurple.shade100
-                                : Colors.white,
+                            ? Colors.deepPurple.shade100
+                            : Colors.white,
                       ),
                       const SizedBox(width: 4),
                       Text(
                         c.isAdmin
                             ? 'ADMIN'
                             : c.user?.role == 'manager'
-                                ? 'QUẢN LÝ'
-                                : 'NHÂN VIÊN',
+                            ? 'QUẢN LÝ'
+                            : 'NHÂN VIÊN',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
                           color: c.isAdmin
                               ? Colors.amber
                               : c.user?.role == 'manager'
-                                  ? Colors.deepPurple.shade100
-                                  : Colors.white,
+                              ? Colors.deepPurple.shade100
+                              : Colors.white,
                         ),
                       ),
                     ],
@@ -394,9 +486,13 @@ class _HomePageState extends State<HomePage> {
               c.isAdmin
                   ? 'Bảng điều khiển quản trị: Theo dõi nhân sự, phân quyền, ca làm và duyệt đơn.'
                   : c.isManager
-                      ? 'Bảng điều khiển quản lý: Theo dõi nhân sự, bảng công, thống kê và duyệt đơn.'
-                      : 'Ghi nhận thời gian và vị trí điểm danh chuẩn xác bằng GPS & mã QR động.',
-              style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4),
+                  ? 'Bảng điều khiển quản lý: Theo dõi nhân sự, bảng công, thống kê và duyệt đơn.'
+                  : 'Ghi nhận thời gian và vị trí điểm danh chuẩn xác bằng GPS & mã QR động.',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
             const SizedBox(height: 18),
             FilledButton.tonalIcon(
@@ -408,13 +504,15 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              icon: Icon(c.isStaff ? Icons.tune_rounded : Icons.fingerprint_rounded),
+              icon: Icon(
+                c.isStaff ? Icons.tune_rounded : Icons.fingerprint_rounded,
+              ),
               label: Text(
                 c.isAdmin
                     ? 'Quản lý nhân sự & ca làm'
                     : c.isManager
-                        ? 'Xem nhân sự & ca làm'
-                        : 'Chấm công ngay (GPS / QR)',
+                    ? 'Xem nhân sự & ca làm'
+                    : 'Chấm công ngay (GPS / QR)',
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
@@ -457,7 +555,9 @@ class _HomePageState extends State<HomePage> {
                     _quickActionItem(
                       label: 'Duyệt đơn ($pending)',
                       icon: Icons.fact_check_outlined,
-                      color: pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
+                      color: pending > 0
+                          ? const Color(0xFFEA580C)
+                          : const Color(0xFF64748B),
                       onTap: () => setState(() => page = 4),
                     ),
                   ]
@@ -466,7 +566,9 @@ class _HomePageState extends State<HomePage> {
                     _quickActionItem(
                       label: 'Duyệt đơn ($pending)',
                       icon: Icons.fact_check_outlined,
-                      color: pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
+                      color: pending > 0
+                          ? const Color(0xFFEA580C)
+                          : const Color(0xFF64748B),
                       onTap: () => setState(() => page = 4),
                     ),
                     const SizedBox(width: 10),
@@ -611,13 +713,19 @@ class _HomePageState extends State<HomePage> {
                         myShift != null
                             ? '${minuteText(myShift.startMinute)} – ${minuteText(myShift.endMinute)} (Cho phép trễ ${myShift.grace}p)'
                             : 'Vui lòng liên hệ Admin để được phân ca làm việc',
-                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF64748B),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: myTodayRecord == null
                         ? Colors.amber.shade50
@@ -724,58 +832,63 @@ class _HomePageState extends State<HomePage> {
     title: Text(title),
   );
 
-  Widget metric(String title, String value, IconData icon, Color color, double width) =>
-      SizedBox(
-        width: width >= 700 ? (width - 36) / 4 : (width - 12) / 2,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+  Widget metric(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+    double width,
+  ) => SizedBox(
+    width: width >= 700 ? (width - 36) / 4 : (width - 12) / 2,
+    child: Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 20),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Color(0xFF64748B),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 20),
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    ),
+  );
   Widget attendanceTile(Attendance a) => ListTile(
     contentPadding: EdgeInsets.zero,
     leading: CircleAvatar(
@@ -791,7 +904,11 @@ class _HomePageState extends State<HomePage> {
     ),
     isThreeLine: true,
     trailing: Text(
-      a.checkOut == null ? 'Trong ca' : '${a.hours.toStringAsFixed(1)} h',
+      a.checkOut == null
+          ? (DateTime.now().isAfter(a.scheduledEnd)
+                ? 'Thiếu giờ ra'
+                : 'Trong ca')
+          : '${a.hours.toStringAsFixed(1)} h',
       style: const TextStyle(fontWeight: FontWeight.bold),
     ),
     onTap: () => showDialog<void>(
@@ -821,6 +938,11 @@ class _HomePageState extends State<HomePage> {
         )
         .toList();
     return list([
+      _pageHint(
+        'Quản lý nơi làm việc',
+        'Thiết lập văn phòng → tạo ca → phân ca cho nhân viên. Tài khoản có lịch sử nên được khóa thay vì xóa.',
+        Icons.manage_accounts_outlined,
+      ),
       if (c.isAdmin)
         Section(
           title: 'Văn phòng & mã QR',
@@ -893,24 +1015,27 @@ class _HomePageState extends State<HomePage> {
                   side: BorderSide(color: Colors.grey.shade200),
                 ),
                 child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   leading: CircleAvatar(
                     backgroundColor: e.isAdmin
                         ? const Color(0xFFEDE9FE)
                         : e.isManager
-                            ? const Color(0xFFCCFBF1)
-                            : const Color(0xFFE0F2FE),
+                        ? const Color(0xFFCCFBF1)
+                        : const Color(0xFFE0F2FE),
                     child: Icon(
                       e.isAdmin
                           ? Icons.shield_outlined
                           : e.isManager
-                              ? Icons.supervisor_account_outlined
-                              : Icons.person_outline,
+                          ? Icons.supervisor_account_outlined
+                          : Icons.person_outline,
                       color: e.isAdmin
                           ? Colors.deepPurple
                           : e.isManager
-                              ? Colors.teal
-                              : const Color(0xFF0284C7),
+                          ? Colors.teal
+                          : const Color(0xFF0284C7),
                     ),
                   ),
                   title: Row(
@@ -924,43 +1049,49 @@ class _HomePageState extends State<HomePage> {
                       ),
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: e.isAdmin
                               ? Colors.deepPurple.shade50
                               : e.isManager
-                                  ? Colors.cyan.shade50
-                                  : Colors.teal.shade50,
+                              ? Colors.cyan.shade50
+                              : Colors.teal.shade50,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: e.isAdmin
                                 ? Colors.deepPurple.shade200
                                 : e.isManager
-                                    ? Colors.cyan.shade200
-                                    : Colors.teal.shade200,
+                                ? Colors.cyan.shade200
+                                : Colors.teal.shade200,
                           ),
                         ),
                         child: Text(
                           e.isAdmin
                               ? 'ADMIN'
                               : e.isManager
-                                  ? 'QUẢN LÝ'
-                                  : 'NHÂN VIÊN',
+                              ? 'QUẢN LÝ'
+                              : 'NHÂN VIÊN',
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
                             color: e.isAdmin
                                 ? Colors.deepPurple
                                 : e.isManager
-                                    ? Colors.cyan.shade800
-                                    : Colors.teal.shade800,
+                                ? Colors.cyan.shade800
+                                : Colors.teal.shade800,
                           ),
                         ),
                       ),
                       if (!e.active) ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.red.shade50,
                             borderRadius: BorderRadius.circular(8),
@@ -981,83 +1112,108 @@ class _HomePageState extends State<HomePage> {
                   subtitle: Text(
                     '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}\n${c.data.shifts.where((s) => s.id == e.shiftId).firstOrNull?.name ?? 'Chưa phân ca'}',
                   ),
-                  trailing: !c.isAdmin ? null : PopupMenuButton<String>(
-                    onSelected: (v) async {
-                      if (v == 'edit') {
-                        editEmployee(e);
-                      } else if (v == 'role') {
-                        changeRole(e);
-                      } else if (v == 'shift') {
-                        assignShift(e);
-                      } else if (v == 'toggle_lock') {
-                        final copy = Employee.fromJson(e.toJson())..active = !e.active;
-                        await perform(
-                          () => c.saveEmployee(copy),
-                          e.active ? 'Đã khóa tài khoản' : 'Đã mở khóa tài khoản',
-                        );
-                      } else if (v == 'delete') {
-                        final ok = await confirm(
-                          context,
-                          'Xóa tài khoản ${e.name}? Tài khoản đã có lịch sử chỉ có thể khóa.',
-                        );
-                        if (ok && mounted) {
-                          await perform(() => c.deleteEmployee(e.id));
-                        }
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'edit',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit_outlined, size: 18),
-                            SizedBox(width: 8),
-                            Text('Sửa thông tin'),
+                  trailing: !c.isAdmin
+                      ? null
+                      : PopupMenuButton<String>(
+                          onSelected: (v) async {
+                            if (v == 'edit') {
+                              editEmployee(e);
+                            } else if (v == 'role') {
+                              changeRole(e);
+                            } else if (v == 'shift') {
+                              assignShift(e);
+                            } else if (v == 'toggle_lock') {
+                              final copy = Employee.fromJson(e.toJson())
+                                ..active = !e.active;
+                              await perform(
+                                () => c.saveEmployee(copy),
+                                e.active
+                                    ? 'Đã khóa tài khoản'
+                                    : 'Đã mở khóa tài khoản',
+                              );
+                            } else if (v == 'delete') {
+                              final ok = await confirm(
+                                context,
+                                'Xóa tài khoản ${e.name}? Tài khoản đã có lịch sử chỉ có thể khóa.',
+                              );
+                              if (ok && mounted) {
+                                await perform(() => c.deleteEmployee(e.id));
+                              }
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Sửa thông tin'),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'role',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.admin_panel_settings_outlined,
+                                    size: 18,
+                                    color: Colors.deepPurple,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Phân quyền (Admin / Quản lý / NV)'),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'shift',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.access_time, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Phân ca làm việc'),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'toggle_lock',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    e.active
+                                        ? Icons.lock_outline
+                                        : Icons.lock_open,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    e.active
+                                        ? 'Khóa tài khoản'
+                                        : 'Mở khóa tài khoản',
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete_outline,
+                                    size: 18,
+                                    color: Colors.red,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Xóa tài khoản',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'role',
-                        child: Row(
-                          children: [
-                            Icon(Icons.admin_panel_settings_outlined, size: 18, color: Colors.deepPurple),
-                            SizedBox(width: 8),
-                            Text('Phân quyền (Admin / Quản lý / NV)'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'shift',
-                        child: Row(
-                          children: [
-                            Icon(Icons.access_time, size: 18),
-                            SizedBox(width: 8),
-                            Text('Phân ca làm việc'),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'toggle_lock',
-                        child: Row(
-                          children: [
-                            Icon(e.active ? Icons.lock_outline : Icons.lock_open, size: 18),
-                            SizedBox(width: 8),
-                            Text(e.active ? 'Khóa tài khoản' : 'Mở khóa tài khoản'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                            SizedBox(width: 8),
-                            Text('Xóa tài khoản', style: TextStyle(color: Colors.red)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
           ],
@@ -1085,29 +1241,116 @@ class _HomePageState extends State<HomePage> {
                         subtitle: Text(
                           '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Cho phép trễ ${s.grace} phút${s.endMinute < s.startMinute ? ' • Qua đêm' : ''}',
                         ),
-                        trailing: !c.isAdmin ? null : PopupMenuButton<String>(
-                          onSelected: (v) async {
-                            if (v == 'edit') {
-                              editShift(s);
-                            } else if (await confirm(
-                              context,
-                              'Xóa ca ${s.name}?',
-                            )) {
-                              await perform(() => c.deleteShift(s.id));
-                            }
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'edit', child: Text('Sửa')),
-                            PopupMenuItem(value: 'delete', child: Text('Xóa')),
-                          ],
-                        ),
+                        trailing: !c.isAdmin
+                            ? null
+                            : PopupMenuButton<String>(
+                                onSelected: (v) async {
+                                  if (v == 'edit') {
+                                    editShift(s);
+                                  } else if (await confirm(
+                                    context,
+                                    'Xóa ca ${s.name}?',
+                                  )) {
+                                    await perform(() => c.deleteShift(s.id));
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('Sửa'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Xóa'),
+                                  ),
+                                ],
+                              ),
                       ),
+                    )
+                    .toList(),
+              ),
+      ),
+      Section(
+        title: 'Phòng ban',
+        subtitle: '${c.data.departments.length} phòng ban đang hoạt động',
+        action: c.isAdmin
+            ? IconButton(
+                tooltip: 'Thêm phòng ban',
+                onPressed: () => editDepartment(),
+                icon: const Icon(Icons.add),
+              )
+            : null,
+        child: c.data.departments.isEmpty
+            ? const EmptyState('Chưa có phòng ban nào.')
+            : Column(
+                children: c.data.departments
+                    .map(
+                      (d) {
+                        final count = c.data.employees
+                            .where((e) => e.department.toLowerCase() == d.name.toLowerCase())
+                            .length;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.business_outlined),
+                          title: Text(
+                            d.name,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            '$count nhân sự${d.description != null && d.description!.isNotEmpty ? " • ${d.description}" : ""}',
+                          ),
+                          trailing: !c.isAdmin
+                              ? null
+                              : PopupMenuButton<String>(
+                                  onSelected: (v) async {
+                                    if (v == 'edit') {
+                                      editDepartment(d);
+                                    } else if (await confirm(
+                                      context,
+                                      'Xóa phòng ban ${d.name}?',
+                                    )) {
+                                      await perform(() => c.deleteDepartment(d.id));
+                                    }
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('Sửa'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('Xóa'),
+                                    ),
+                                  ],
+                                ),
+                        );
+                      },
                     )
                     .toList(),
               ),
       ),
     ]);
   }
+
+  Future<void> editDepartment([Department? d]) => editForm(
+    context,
+    title: d == null ? 'Thêm phòng ban mới' : 'Sửa phòng ban',
+    fields: {
+      'Tên phòng ban': d?.name ?? '',
+      'Mô tả': d?.description ?? '',
+    },
+    save: (v) {
+      final name = v['Tên phòng ban']!.trim();
+      if (name.isEmpty) throw ArgumentError('Vui lòng nhập tên phòng ban.');
+      return c.saveDepartment(
+        Department(
+          id: d?.id ?? newId(),
+          name: name,
+          description: v['Mô tả']?.trim(),
+        ),
+      );
+    },
+  );
 
   String minuteText(int m) =>
       '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
@@ -1145,24 +1388,38 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (context) => SimpleDialog(
         title: Text('Phân quyền tài khoản • ${e.name}'),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 20,
+        ),
         children: [
           ListTile(
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
               side: BorderSide(
-                color: e.role == 'employee' ? const Color(0xFF087F8C) : Colors.grey.shade300,
+                color: e.role == 'employee'
+                    ? const Color(0xFF087F8C)
+                    : Colors.grey.shade300,
                 width: e.role == 'employee' ? 2 : 1,
               ),
             ),
-            tileColor: e.role == 'employee' ? const Color(0xFF087F8C).withValues(alpha: 0.05) : null,
+            tileColor: e.role == 'employee'
+                ? const Color(0xFF087F8C).withValues(alpha: 0.05)
+                : null,
             leading: const CircleAvatar(
               backgroundColor: Color(0xFFE0F2FE),
               child: Icon(Icons.person_outline, color: Color(0xFF0284C7)),
             ),
-            title: const Text('Nhân viên (Employee)', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: const Text('Chấm công GPS/QR, làm đơn xin nghỉ, xem lịch sử cá nhân.'),
-            trailing: e.role == 'employee' ? const Icon(Icons.check_circle, color: Color(0xFF087F8C)) : null,
+            title: const Text(
+              'Nhân viên (Employee)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text(
+              'Chấm công GPS/QR, làm đơn xin nghỉ, xem lịch sử cá nhân.',
+            ),
+            trailing: e.role == 'employee'
+                ? const Icon(Icons.check_circle, color: Color(0xFF087F8C))
+                : null,
             onTap: () => Navigator.pop(context, 'employee'),
           ),
           const SizedBox(height: 12),
@@ -1174,14 +1431,26 @@ class _HomePageState extends State<HomePage> {
                 width: e.role == 'manager' ? 2 : 1,
               ),
             ),
-            tileColor: e.role == 'manager' ? Colors.teal.withValues(alpha: 0.05) : null,
+            tileColor: e.role == 'manager'
+                ? Colors.teal.withValues(alpha: 0.05)
+                : null,
             leading: const CircleAvatar(
               backgroundColor: Color(0xFFE6FFFA),
-              child: Icon(Icons.supervisor_account_outlined, color: Colors.teal),
+              child: Icon(
+                Icons.supervisor_account_outlined,
+                color: Colors.teal,
+              ),
             ),
-            title: const Text('Quản lý bộ phận (Manager)', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: const Text('Theo dõi thống kê nhân sự, xem báo cáo, duyệt đơn cấp phòng ban.'),
-            trailing: e.role == 'manager' ? const Icon(Icons.check_circle, color: Colors.teal) : null,
+            title: const Text(
+              'Quản lý bộ phận (Manager)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text(
+              'Theo dõi thống kê nhân sự, xem báo cáo, duyệt đơn cấp phòng ban.',
+            ),
+            trailing: e.role == 'manager'
+                ? const Icon(Icons.check_circle, color: Colors.teal)
+                : null,
             onTap: () => Navigator.pop(context, 'manager'),
           ),
           const SizedBox(height: 12),
@@ -1189,18 +1458,29 @@ class _HomePageState extends State<HomePage> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
               side: BorderSide(
-                color: e.role == 'admin' ? Colors.deepPurple : Colors.grey.shade300,
+                color: e.role == 'admin'
+                    ? Colors.deepPurple
+                    : Colors.grey.shade300,
                 width: e.role == 'admin' ? 2 : 1,
               ),
             ),
-            tileColor: e.role == 'admin' ? Colors.deepPurple.withValues(alpha: 0.05) : null,
+            tileColor: e.role == 'admin'
+                ? Colors.deepPurple.withValues(alpha: 0.05)
+                : null,
             leading: const CircleAvatar(
               backgroundColor: Color(0xFFEDE9FE),
               child: Icon(Icons.shield_outlined, color: Colors.deepPurple),
             ),
-            title: const Text('Quản trị viên (Admin)', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: const Text('Toàn quyền quản trị nhân sự, ca làm, duyệt đơn từ và cấu hình văn phòng.'),
-            trailing: e.role == 'admin' ? const Icon(Icons.check_circle, color: Colors.deepPurple) : null,
+            title: const Text(
+              'Quản trị viên (Admin)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text(
+              'Toàn quyền quản trị nhân sự, ca làm, duyệt đơn từ và cấu hình văn phòng.',
+            ),
+            trailing: e.role == 'admin'
+                ? const Icon(Icons.check_circle, color: Colors.deepPurple)
+                : null,
             onTap: () => Navigator.pop(context, 'admin'),
           ),
         ],
@@ -1211,8 +1491,8 @@ class _HomePageState extends State<HomePage> {
       final roleTitle = selected == 'admin'
           ? 'Quản trị viên (Admin)'
           : selected == 'manager'
-              ? 'Quản lý (Manager)'
-              : 'Nhân viên (Employee)';
+          ? 'Quản lý (Manager)'
+          : 'Nhân viên (Employee)';
       await perform(
         () => c.saveEmployee(copy),
         'Đã cập nhật quyền thành: $roleTitle',
@@ -1296,6 +1576,11 @@ class _HomePageState extends State<HomePage> {
         )
         .toList();
     return list([
+      _pageHint(
+        'Kiểm tra bảng công',
+        'Tìm theo nhân viên hoặc chọn khoảng ngày. Chạm vào bản ghi để xem giờ vào, giờ ra và vị trí.',
+        Icons.fact_check_outlined,
+      ),
       Section(
         title: 'Bảng công',
         subtitle:
@@ -1408,6 +1693,11 @@ class _HomePageState extends State<HomePage> {
             .toList()
           ..sort((a, b) => b.from.compareTo(a.from));
     return list([
+      _pageHint(
+        'Theo dõi đơn của bạn',
+        'Chỉ đơn đang chờ mới được sửa hoặc xóa. Người quản lý không được tự duyệt đơn của mình.',
+        Icons.assignment_outlined,
+      ),
       Section(
         title: 'Đơn nghỉ & giải trình',
         subtitle: 'Đơn đã xử lý được giữ nguyên để đối chiếu',
@@ -1576,25 +1866,30 @@ class _HomePageState extends State<HomePage> {
     final roleColor = c.isAdmin
         ? Colors.amber.shade700
         : c.user?.role == 'manager'
-            ? Colors.teal
-            : const Color(0xFF0284C7);
+        ? Colors.teal
+        : const Color(0xFF0284C7);
     final roleBg = c.isAdmin
         ? Colors.amber.shade50
         : c.user?.role == 'manager'
-            ? Colors.teal.shade50
-            : const Color(0xFFE0F2FE);
+        ? Colors.teal.shade50
+        : const Color(0xFFE0F2FE);
     final roleBorder = c.isAdmin
         ? Colors.amber.shade300
         : c.user?.role == 'manager'
-            ? Colors.teal.shade200
-            : const Color(0xFFBAE6FD);
+        ? Colors.teal.shade200
+        : const Color(0xFFBAE6FD);
     final roleName = c.isAdmin
         ? 'Quản trị viên (Admin)'
         : c.user?.role == 'manager'
-            ? 'Quản lý (Manager)'
-            : 'Nhân viên (Employee)';
+        ? 'Quản lý (Manager)'
+        : 'Nhân viên (Employee)';
 
     return list([
+      _pageHint(
+        'Tài khoản & bảo mật',
+        'Kiểm tra email nhận OTP và quản lý đăng nhập sinh trắc học trên thiết bị này.',
+        Icons.shield_outlined,
+      ),
       // Profile Header Card Hiện Đại
       Container(
         padding: const EdgeInsets.all(22),
@@ -1618,7 +1913,9 @@ class _HomePageState extends State<HomePage> {
                   radius: 32,
                   backgroundColor: const Color(0xFF087F8C),
                   child: Text(
-                    c.user!.name.isNotEmpty ? c.user!.name[0].toUpperCase() : 'U',
+                    c.user!.name.isNotEmpty
+                        ? c.user!.name[0].toUpperCase()
+                        : 'U',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 26,
@@ -1641,7 +1938,10 @@ class _HomePageState extends State<HomePage> {
                       ),
                       const SizedBox(height: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: roleBg,
                           borderRadius: BorderRadius.circular(10),
@@ -1654,8 +1954,8 @@ class _HomePageState extends State<HomePage> {
                               c.isAdmin
                                   ? Icons.shield_rounded
                                   : c.user?.role == 'manager'
-                                      ? Icons.supervisor_account_rounded
-                                      : Icons.badge_rounded,
+                                  ? Icons.supervisor_account_rounded
+                                  : Icons.badge_rounded,
                               size: 14,
                               color: roleColor,
                             ),
@@ -1695,7 +1995,9 @@ class _HomePageState extends State<HomePage> {
             _profileInfoRow(
               icon: Icons.corporate_fare_outlined,
               label: 'Phòng ban',
-              value: c.user!.department.isEmpty ? 'Chưa phân công' : c.user!.department,
+              value: c.user!.department.isEmpty
+                  ? 'Chưa phân công'
+                  : c.user!.department,
             ),
           ],
         ),
@@ -1763,7 +2065,11 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text(
                 '• Backend: ASP.NET Core 10 (Render Cloud + Neon PostgreSQL)\n• Xác thực: Mật khẩu + OTP Brevo HTTPS API + Biometric Secure Storage\n• Chấm công: GPS Geofencing + QR Code động mã hóa\n• Thống kê: Báo cáo AI Insights + Biểu đồ fl_chart',
-                style: TextStyle(fontSize: 12, height: 1.6, color: Color(0xFF475569)),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.6,
+                  color: Color(0xFF475569),
+                ),
               ),
             ],
           ),
@@ -1796,7 +2102,11 @@ class _HomePageState extends State<HomePage> {
               c.logout();
             }
           },
-          icon: const Icon(Icons.logout_rounded, color: Color(0xFFDC2626), size: 20),
+          icon: const Icon(
+            Icons.logout_rounded,
+            color: Color(0xFFDC2626),
+            size: 20,
+          ),
           label: const Text(
             'Đăng xuất tài khoản',
             style: TextStyle(
@@ -1951,10 +2261,18 @@ class _EmployeeFormDialog extends StatefulWidget {
 }
 
 class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
-  late final _nameCtrl = TextEditingController(text: widget.employee?.name ?? '');
-  late final _emailCtrl = TextEditingController(text: widget.employee?.email ?? '');
-  late final _usernameCtrl = TextEditingController(text: widget.employee?.username ?? '');
-  late final _deptCtrl = TextEditingController(text: widget.employee?.department ?? '');
+  late final _nameCtrl = TextEditingController(
+    text: widget.employee?.name ?? '',
+  );
+  late final _emailCtrl = TextEditingController(
+    text: widget.employee?.email ?? '',
+  );
+  late final _usernameCtrl = TextEditingController(
+    text: widget.employee?.username ?? '',
+  );
+  late String? _selectedDept = widget.employee?.department.isEmpty == true
+      ? null
+      : widget.employee?.department;
   late final _passwordCtrl = TextEditingController();
 
   late String _role = widget.employee?.role ?? 'employee';
@@ -1970,7 +2288,6 @@ class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
     _nameCtrl.dispose();
     _emailCtrl.dispose();
     _usernameCtrl.dispose();
-    _deptCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
@@ -1979,7 +2296,7 @@ class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
     final name = _nameCtrl.text.trim();
     final email = _emailCtrl.text.trim();
     final username = _usernameCtrl.text.trim();
-    final dept = _deptCtrl.text.trim();
+    final dept = _selectedDept?.trim() ?? '';
     final password = _passwordCtrl.text;
 
     if (name.isEmpty || email.isEmpty || username.isEmpty) {
@@ -2081,7 +2398,10 @@ class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
             Expanded(
               child: Text(
                 isNew ? 'Thêm nhân viên mới' : 'Chỉnh sửa nhân viên',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ],
@@ -2167,16 +2487,50 @@ class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
                 ),
                 const SizedBox(height: 14),
 
-                // Phòng ban
-                TextField(
-                  controller: _deptCtrl,
+                // DROP LIST: PHÒNG BAN TRỰC THUỘC
+                DropdownButtonFormField<String?>(
+                  initialValue: _selectedDept,
+                  isExpanded: true,
                   decoration: const InputDecoration(
-                    labelText: 'Phòng ban',
-                    hintText: 'Ví dụ: Kỹ thuật, Nhân sự, Kinh doanh...',
+                    labelText: 'Phòng ban trực thuộc',
                     prefixIcon: Icon(Icons.corporate_fare_outlined),
                     filled: true,
                     fillColor: Color(0xFFF8FAFC),
                   ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text(
+                        'Chưa phân phòng ban',
+                        style: TextStyle(color: Colors.grey),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    for (final d in widget.controller.data.departments)
+                      DropdownMenuItem<String?>(
+                        value: d.name,
+                        child: Text(
+                          d.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    if (widget.employee?.department.isNotEmpty == true &&
+                        !widget.controller.data.departments.any(
+                          (d) =>
+                              d.name.toLowerCase() ==
+                              widget.employee!.department.toLowerCase(),
+                        ))
+                      DropdownMenuItem<String?>(
+                        value: widget.employee!.department,
+                        child: Text(
+                          '${widget.employee!.department} (Hiện tại)',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (val) => setState(() => _selectedDept = val),
                 ),
                 const SizedBox(height: 16),
 
@@ -2242,9 +2596,7 @@ class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
                   decoration: InputDecoration(
                     labelText: 'Trạng thái hoạt động *',
                     prefixIcon: Icon(
-                      _active
-                          ? Icons.check_circle_outline
-                          : Icons.lock_outline,
+                      _active ? Icons.check_circle_outline : Icons.lock_outline,
                       color: _active
                           ? const Color(0xFF10B981)
                           : const Color(0xFFEF4444),

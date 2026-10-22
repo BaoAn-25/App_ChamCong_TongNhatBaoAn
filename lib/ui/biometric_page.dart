@@ -18,7 +18,7 @@ class BiometricLoginHelper {
     try {
       final canCheck = await _auth.canCheckBiometrics;
       final isSupported = await _auth.isDeviceSupported();
-      return canCheck || isSupported;
+      return canCheck && isSupported;
     } catch (_) {
       return false;
     }
@@ -40,7 +40,7 @@ class BiometricLoginHelper {
         localizedReason: 'Xác thực để đăng nhập nhanh vào App Chấm Công',
         options: const AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: false,
+          biometricOnly: true,
           useErrorDialogs: true,
         ),
       );
@@ -119,7 +119,9 @@ class _BiometricSettingsCardState extends State<BiometricSettingsCard> {
 
   String _biometricLabel() {
     if (_types.contains(BiometricType.face)) return 'Khuôn mặt (Face ID)';
-    if (_types.contains(BiometricType.fingerprint)) return 'Vân tay (Fingerprint)';
+    if (_types.contains(BiometricType.fingerprint)) {
+      return 'Vân tay (Fingerprint)';
+    }
     if (_types.contains(BiometricType.iris)) return 'Mống mắt (Iris)';
     if (_types.contains(BiometricType.strong)) return 'Sinh trắc học mạnh';
     if (_types.contains(BiometricType.weak)) return 'Sinh trắc học';
@@ -128,7 +130,9 @@ class _BiometricSettingsCardState extends State<BiometricSettingsCard> {
 
   IconData _biometricIcon() {
     if (_types.contains(BiometricType.face)) return Icons.face_rounded;
-    if (_types.contains(BiometricType.fingerprint)) return Icons.fingerprint_rounded;
+    if (_types.contains(BiometricType.fingerprint)) {
+      return Icons.fingerprint_rounded;
+    }
     return Icons.security_rounded;
   }
 
@@ -148,18 +152,26 @@ class _BiometricSettingsCardState extends State<BiometricSettingsCard> {
     } else {
       final refresh = widget.controller.client.refreshToken;
       if (refresh == null) {
-        message(context, 'Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại bằng mật khẩu + OTP.');
+        message(
+          context,
+          'Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại bằng mật khẩu + OTP.',
+        );
         return;
       }
       final authed = await BiometricLoginHelper.authenticate();
       if (!authed) {
-        if (mounted) message(context, 'Xác thực sinh trắc học thất bại hoặc đã bị hủy.');
+        if (mounted) {
+          message(context, 'Xác thực sinh trắc học thất bại hoặc đã bị hủy.');
+        }
         return;
       }
       await BiometricLoginHelper.enroll(refresh);
       if (mounted) {
         setState(() => _enrolled = true);
-        message(context, 'Đã kích hoạt đăng nhập bằng ${_biometricLabel()}. Lần sau chỉ cần quét là vào, không cần OTP.');
+        message(
+          context,
+          'Đã kích hoạt đăng nhập bằng ${_biometricLabel()}. Lần sau chỉ cần quét là vào, không cần OTP.',
+        );
       }
     }
   }

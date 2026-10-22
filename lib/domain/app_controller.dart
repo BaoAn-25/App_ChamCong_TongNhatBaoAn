@@ -12,6 +12,7 @@ class AppController extends ChangeNotifier {
   final ApiClient client;
   final AuthService auth;
   final EmployeeRepository employeeRepo;
+  final DepartmentRepository departmentRepo;
   final ShiftRepository shiftRepo;
   final OfficeRepository officeRepo;
   final AttendanceRepository attendanceRepo;
@@ -35,6 +36,7 @@ class AppController extends ChangeNotifier {
     ApiClient? apiClient,
     AuthService? authService,
     EmployeeRepository? employeeRepository,
+    DepartmentRepository? departmentRepository,
     ShiftRepository? shiftRepository,
     OfficeRepository? officeRepository,
     AttendanceRepository? attendanceRepository,
@@ -45,6 +47,7 @@ class AppController extends ChangeNotifier {
       shared,
       authService ?? AuthService(shared),
       employeeRepository ?? EmployeeRepository(shared),
+      departmentRepository ?? DepartmentRepository(shared),
       shiftRepository ?? ShiftRepository(shared),
       officeRepository ?? OfficeRepository(shared),
       attendanceRepository ?? AttendanceRepository(shared),
@@ -56,6 +59,7 @@ class AppController extends ChangeNotifier {
     this.client,
     this.auth,
     this.employeeRepo,
+    this.departmentRepo,
     this.shiftRepo,
     this.officeRepo,
     this.attendanceRepo,
@@ -64,6 +68,8 @@ class AppController extends ChangeNotifier {
     client.onUnauthorized = () {
       _user = null;
       data = AppData();
+      lastSyncedAt = null;
+      syncError = null;
       notifyListeners();
     };
   }
@@ -133,7 +139,9 @@ class AppController extends ChangeNotifier {
   }
 
   void requireStaff() {
-    if (!isStaff) throw StateError('Chỉ quản trị viên hoặc quản lý được thực hiện.');
+    if (!isStaff) {
+      throw StateError('Chỉ quản trị viên hoặc quản lý được thực hiện.');
+    }
   }
 
   Employee requireUser() {
@@ -142,38 +150,40 @@ class AppController extends ChangeNotifier {
     return u;
   }
 
+  bool isSyncing = false;
+  String? syncError;
+  DateTime? lastSyncedAt;
+
   Future<void> syncAll() async {
+    if (isSyncing || _user == null) return;
+    final userId = _user!.id;
+    isSyncing = true;
+    syncError = null;
+    notifyListeners();
     try {
-      final officeFuture = officeRepo.get().catchError((_) => data.office);
-      final shiftsFuture = shiftRepo.list().catchError((_) => data.shifts);
-      final attendanceFuture = attendanceRepo.list().catchError(
-        (_) => data.attendance,
-      );
-      final requestsFuture = requestRepo.list().catchError(
-        (_) => data.requests,
-      );
-      final employeesFuture = isStaff
-          ? employeeRepo.list().catchError((_) => data.employees)
-          : Future.value([?_user]);
-
-      final results = await Future.wait([
-        officeFuture,
-        shiftsFuture,
-        attendanceFuture,
-        requestsFuture,
-        employeesFuture,
+      final results = await Future.wait<dynamic>([
+        officeRepo.get(),
+        shiftRepo.list(),
+        attendanceRepo.list(),
+        requestRepo.list(),
+        isStaff ? employeeRepo.list() : Future.value([_user!]),
+        departmentRepo.list(),
       ]);
-
+      if (_user?.id != userId) return;
       data = AppData(
         office: results[0] as Office,
         shifts: results[1] as List<Shift>,
         attendance: results[2] as List<Attendance>,
         requests: results[3] as List<WorkRequest>,
         employees: results[4] as List<Employee>,
+        departments: results[5] as List<Department>,
       );
+      lastSyncedAt = DateTime.now();
+    } catch (_) {
+      syncError = 'Chưa cập nhật được dữ liệu. Kiểm tra mạng và thử lại.';
+    } finally {
+      isSyncing = false;
       notifyListeners();
-    } catch (e) {
-      debugPrint('Lỗi đồng bộ dữ liệu: $e');
     }
   }
 
@@ -244,6 +254,8 @@ class AppController extends ChangeNotifier {
     await auth.logout();
     _user = null;
     data = AppData();
+    lastSyncedAt = null;
+    syncError = null;
     pendingChallengeId = null;
     pendingAction = null;
     notifyListeners();
@@ -273,7 +285,7 @@ class AppController extends ChangeNotifier {
         .where((e) => e.id == employee.id)
         .firstOrNull;
     if (existing != null) {
-      final updated = await employeeRepo.update(
+      var updated = await employeeRepo.update(
         id: employee.id,
         name: employee.name,
         email: employee.email,
@@ -284,7 +296,7 @@ class AppController extends ChangeNotifier {
         password: password,
       );
       if (employee.shiftId != existing.shiftId) {
-        await employeeRepo.assignShift(employee.id, employee.shiftId);
+        updated = await employeeRepo.assignShift(employee.id, employee.shiftId);
       }
       final idx = data.employees.indexWhere((e) => e.id == employee.id);
       if (idx != -1) data.employees[idx] = updated;
@@ -310,6 +322,29 @@ class AppController extends ChangeNotifier {
     }
     await employeeRepo.delete(id);
     data.employees.removeWhere((e) => e.id == id);
+    await syncAll();
+  }
+
+  // --- CRUD DEPARTMENTS (ADMIN) ---
+
+  Future<void> saveDepartment(Department dept) async {
+    requireAdmin();
+    final existing = data.departments.where((d) => d.id == dept.id).firstOrNull;
+    if (existing != null) {
+      final updated = await departmentRepo.update(dept);
+      final idx = data.departments.indexWhere((d) => d.id == dept.id);
+      if (idx != -1) data.departments[idx] = updated;
+    } else {
+      final created = await departmentRepo.create(dept);
+      data.departments.add(created);
+    }
+    await syncAll();
+  }
+
+  Future<void> deleteDepartment(String id) async {
+    requireAdmin();
+    await departmentRepo.delete(id);
+    data.departments.removeWhere((d) => d.id == id);
     await syncAll();
   }
 

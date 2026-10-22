@@ -29,6 +29,12 @@ public record ShiftDto(Guid Id, string Name, int StartMinute, int EndMinute, int
 }
 public record ShiftUpsert(string Name, int StartMinute, int EndMinute, int Grace);
 
+public record DepartmentDto(Guid Id, string Name, string? Description)
+{
+    public static DepartmentDto From(Department d) => new(d.Id, d.Name, d.Description);
+}
+public record DepartmentUpsert(string Name, string? Description);
+
 public record OfficeDto(string Name, double? Latitude, double? Longitude, double Radius, bool Configured)
 {
     public static OfficeDto From(Office o) => new(o.Name, o.Latitude, o.Longitude, o.Radius, o.Configured);

@@ -207,7 +207,19 @@ class ApiClient {
     return _parseResponse(res);
   }
 
+  Future<bool>? _refreshInFlight;
   Future<bool> _tryRefresh() async {
+    if (_refreshInFlight != null) return _refreshInFlight!;
+    final pending = _performRefresh();
+    _refreshInFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      if (identical(_refreshInFlight, pending)) _refreshInFlight = null;
+    }
+  }
+
+  Future<bool> _performRefresh() async {
     if (_refreshToken == null) return false;
     try {
       final res = await _http
@@ -225,7 +237,19 @@ class ApiClient {
         );
         return true;
       }
-    } catch (_) {}
+      if (res.statusCode != 400 &&
+          res.statusCode != 401 &&
+          res.statusCode != 403) {
+        throw ApiException(
+          res.statusCode,
+          'Chưa làm mới được phiên. Vui lòng thử lại khi mạng ổn định.',
+        );
+      }
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException(0, 'Mất kết nối khi làm mới phiên. Vui lòng thử lại.');
+    }
     return false;
   }
 

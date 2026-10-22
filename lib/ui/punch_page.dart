@@ -20,12 +20,19 @@ class _PunchPageState extends State<PunchPage> {
   DateTime? capturedAt;
   String? qr;
   bool busy = false;
+  String? error;
   Future<void> run(Future<void> Function() fn) async {
-    setState(() => busy = true);
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
       await fn();
     } catch (e) {
-      if (mounted) message(context, e);
+      if (mounted) {
+        setState(() => error = e.toString().replaceFirst("Exception: ", ""));
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -55,7 +62,21 @@ class _PunchPageState extends State<PunchPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('1. Lấy GPS  →  2. Quét QR  →  3. Vân tay  →  4. Xác nhận'),
+              const Text('Lấy vị trí → Quét QR → Xác nhận giờ vào / ra'),
+              const SizedBox(height: 8),
+              const Text(
+                'Xác thực sinh trắc học bổ sung khi bạn đã kích hoạt trong Tài khoản.',
+              ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 20),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -162,22 +183,31 @@ class _PunchPageState extends State<PunchPage> {
                     busy || position == null || qr == null || !office.configured
                     ? null
                     : () => run(() async {
-                        // Bước 3: Xác thực sinh trắc học (vân tay / Face ID)
-                        final authed = await BiometricLoginHelper.authenticate();
-                        if (!authed) {
+                        if (await BiometricLoginHelper.isEnabled &&
+                            !await BiometricLoginHelper.authenticate()) {
                           throw Exception(
-                            'Xác thực sinh trắc học thất bại. '
-                            'Vui lòng thử lại để xác nhận chấm công.',
+                            'Xác thực sinh trắc học chưa thành công. Vui lòng thử lại.',
                           );
                         }
-
+                        // Capture again after the device prompt, which may outlive the GPS freshness window.
+                        final fresh = await acquirePosition();
+                        if (!mounted) return;
+                        setState(() {
+                          position = fresh;
+                          capturedAt = fresh.timestamp;
+                        });
                         final checkingOut = c.openAttendance != null;
                         await c.punch(
                           qr: qr!,
                           latitude: position!.latitude,
                           longitude: position!.longitude,
                           accuracy: position!.accuracy,
-                          distance: distance ?? double.infinity,
+                          distance: Geolocator.distanceBetween(
+                            position!.latitude,
+                            position!.longitude,
+                            office.latitude!,
+                            office.longitude!,
+                          ),
                           capturedAt: capturedAt!,
                           mocked: position!.isMocked,
                         );

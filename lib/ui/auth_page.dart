@@ -125,7 +125,9 @@ class _AuthPageState extends State<AuthPage> {
     final uname = _loginUsername.text.trim();
     final pass = _loginPassword.text;
     if (uname.isEmpty || pass.isEmpty) {
-      setState(() => _error = 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
+      setState(
+        () => _error = 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.',
+      );
       return;
     }
 
@@ -237,7 +239,10 @@ class _AuthPageState extends State<AuthPage> {
             _otpController.clear();
             _error = null;
           });
-          message(context, 'Xác minh thành công! Mời bạn đăng nhập vào hệ thống.');
+          message(
+            context,
+            'Xác minh thành công! Mời bạn đăng nhập vào hệ thống.',
+          );
         }
       } else {
         // Xác thực OTP đăng nhập
@@ -320,7 +325,9 @@ class _AuthPageState extends State<AuthPage> {
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF087F8C).withValues(alpha: 0.08),
+                          color: const Color(
+                            0xFF087F8C,
+                          ).withValues(alpha: 0.08),
                           blurRadius: 24,
                           offset: const Offset(0, 8),
                         ),
@@ -331,7 +338,10 @@ class _AuthPageState extends State<AuthPage> {
                         ),
                       ],
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 28,
+                    ),
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 300),
                       transitionBuilder: (child, anim) => FadeTransition(
@@ -446,7 +456,7 @@ class _AuthPageState extends State<AuthPage> {
               ),
               const SizedBox(width: 8),
               const Text(
-                'MÁY CHỦ CLOUD • SẴN SÀNG',
+                'CHẤM CÔNG NHÂN VIÊN',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
@@ -558,7 +568,9 @@ class _AuthPageState extends State<AuthPage> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                color: isSelected ? const Color(0xFF1E293B) : const Color(0xFF64748B),
+                color: isSelected
+                    ? const Color(0xFF1E293B)
+                    : const Color(0xFF64748B),
               ),
             ),
           ],
@@ -574,6 +586,9 @@ class _AuthPageState extends State<AuthPage> {
       children: [
         TextField(
           controller: _loginUsername,
+          autofillHints: const [AutofillHints.username],
+          textInputAction: TextInputAction.next,
+          enabled: !_busy,
           onChanged: (_) => _clearErrors(),
           decoration: InputDecoration(
             labelText: 'Tên đăng nhập',
@@ -598,6 +613,10 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 16),
         TextField(
           controller: _loginPassword,
+          autofillHints: const [AutofillHints.password],
+          enabled: !_busy,
+          autocorrect: false,
+          enableSuggestions: false,
           obscureText: _obscureLoginPass,
           onChanged: (_) => _clearErrors(),
           decoration: InputDecoration(
@@ -605,7 +624,8 @@ class _AuthPageState extends State<AuthPage> {
             hintText: 'Nhập mật khẩu',
             prefixIcon: const Icon(Icons.lock_outline_rounded),
             suffixIcon: IconButton(
-              onPressed: () => setState(() => _obscureLoginPass = !_obscureLoginPass),
+              onPressed: () =>
+                  setState(() => _obscureLoginPass = !_obscureLoginPass),
               icon: Icon(
                 _obscureLoginPass
                     ? Icons.visibility_outlined
@@ -693,6 +713,8 @@ class _AuthPageState extends State<AuthPage> {
       children: [
         TextField(
           controller: _regName,
+          enabled: !_busy,
+          textInputAction: TextInputAction.next,
           onChanged: (_) => _clearErrors(),
           decoration: _inputDecoration(
             'Họ và tên nhân viên',
@@ -704,6 +726,8 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 14),
         TextField(
           controller: _regEmail,
+          enabled: !_busy,
+          textInputAction: TextInputAction.next,
           keyboardType: TextInputType.emailAddress,
           onChanged: (_) => _clearErrors(),
           decoration: _inputDecoration(
@@ -716,6 +740,8 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 14),
         TextField(
           controller: _regUsername,
+          enabled: !_busy,
+          textInputAction: TextInputAction.next,
           onChanged: (_) => _clearErrors(),
           decoration: _inputDecoration(
             'Tên đăng nhập',
@@ -727,6 +753,8 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 14),
         TextField(
           controller: _regPassword,
+          enabled: !_busy,
+          textInputAction: TextInputAction.next,
           obscureText: _obscureRegPass,
           onChanged: (_) => _clearErrors(),
           decoration: _inputDecoration(
@@ -735,7 +763,8 @@ class _AuthPageState extends State<AuthPage> {
             Icons.lock_outline_rounded,
             primaryColor,
             suffixIcon: IconButton(
-              onPressed: () => setState(() => _obscureRegPass = !_obscureRegPass),
+              onPressed: () =>
+                  setState(() => _obscureRegPass = !_obscureRegPass),
               icon: Icon(
                 _obscureRegPass
                     ? Icons.visibility_outlined
@@ -748,6 +777,8 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 14),
         TextField(
           controller: _regConfirmPassword,
+          enabled: !_busy,
+          textInputAction: TextInputAction.next,
           obscureText: _obscureRegConfirmPass,
           onChanged: (_) => _clearErrors(),
           decoration: _inputDecoration(
@@ -756,8 +787,9 @@ class _AuthPageState extends State<AuthPage> {
             Icons.lock_reset_rounded,
             primaryColor,
             suffixIcon: IconButton(
-              onPressed: () => setState(() =>
-                  _obscureRegConfirmPass = !_obscureRegConfirmPass),
+              onPressed: () => setState(
+                () => _obscureRegConfirmPass = !_obscureRegConfirmPass,
+              ),
               icon: Icon(
                 _obscureRegConfirmPass
                     ? Icons.visibility_outlined
@@ -924,10 +956,7 @@ class _AuthPageState extends State<AuthPage> {
             decoration: const InputDecoration(
               counterText: '',
               hintText: '••••••',
-              hintStyle: TextStyle(
-                letterSpacing: 14,
-                color: Color(0xFFCBD5E1),
-              ),
+              hintStyle: TextStyle(letterSpacing: 14, color: Color(0xFFCBD5E1)),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,

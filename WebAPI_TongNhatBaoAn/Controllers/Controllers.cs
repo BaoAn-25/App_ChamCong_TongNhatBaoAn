@@ -379,7 +379,7 @@ public class OfficeController(AppDb db, QrService qr) : ApiBase
 }
 
 [ApiController, Route("api/attendance"), Authorize]
-public class AttendanceController(AppDb db, QrService qr) : ApiBase
+public class AttendanceController(AppDb db, QrService qr, FaceAttendancePolicy face) : ApiBase
 {
     private static AttendanceDto ToDto(Attendance a, string? name) => new(a.Id, a.EmployeeId, name, a.ShiftName,
         a.WorkDate, a.CheckIn, a.ScheduledEnd, a.LateMinutes, a.Latitude, a.Longitude, a.Accuracy, a.CheckOut,
@@ -446,6 +446,8 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
             ScheduledEnd = TimeVn.ToUtc(end), LateMinutes = late, Latitude = r.Latitude, Longitude = r.Longitude,
             Accuracy = r.Accuracy, IdempotencyKey = r.IdempotencyKey
         };
+        var faceError = await face.Consume(uid, r.FaceProof, "check-in");
+        if (faceError != null) return Fail(faceError, 403);
         db.Attendance.Add(a);
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateException) { return Fail("Yêu cầu chấm công trùng lặp. Hãy tải lại trạng thái.", 409); }
@@ -470,6 +472,8 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
         var open = await db.Attendance.FirstOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOut == null);
         if (open == null) return Fail("Bạn chưa chấm công vào.", 409);
         if (now < open.CheckIn) return Fail("Giờ thiết bị không hợp lệ.");
+        var faceError = await face.Consume(uid, r.FaceProof, "check-out");
+        if (faceError != null) return Fail(faceError, 403);
         open.CheckOut = now;
         open.OutLatitude = r.Latitude;
         open.OutLongitude = r.Longitude;

@@ -227,6 +227,15 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void stageFaceLogin(String username, String challenge) {
+    pendingChallengeId = challenge;
+    pendingAction = 'login';
+    pendingUsername = username;
+    pendingEmail = null;
+    demoOtp = null;
+    notifyListeners();
+  }
+
   Future<void> verifyOtp(String code) async {
     if (pendingChallengeId == null) {
       throw StateError('Phiên OTP hết hạn hoặc không hợp lệ.');
@@ -427,6 +436,7 @@ class AppController extends ChangeNotifier {
     required double distance,
     required DateTime capturedAt,
     bool mocked = false,
+    String? faceProof,
   }) async {
     requireUser();
     final open = openAttendance;
@@ -441,6 +451,7 @@ class AppController extends ChangeNotifier {
         capturedAt: capturedAt,
         idempotencyKey: idempotencyKey,
         isMocked: mocked,
+        faceProof: faceProof,
       );
     } else {
       await attendanceRepo.checkOut(
@@ -451,6 +462,7 @@ class AppController extends ChangeNotifier {
         capturedAt: capturedAt,
         idempotencyKey: idempotencyKey,
         isMocked: mocked,
+        faceProof: faceProof,
       );
     }
     await syncAll();

@@ -4,6 +4,7 @@ import '../data/api_client.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'biometric_page.dart';
+import 'face_camera_page.dart';
 import 'common.dart';
 
 class AuthPage extends StatefulWidget {
@@ -34,6 +35,7 @@ class _AuthPageState extends State<AuthPage> {
 
   bool _busy = false;
   bool _otpStep = false;
+  bool _faceLoginFlow = false;
   String _otpPurpose = 'login'; // 'login' hoặc 'register'
   String? _targetEmail;
   String? _targetUsername;
@@ -101,6 +103,43 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
+  Future<void> _handleFaceLogin() async {
+    if (_busy) return;
+    final username = _loginUsername.text.trim();
+    if (username.isEmpty) {
+      setState(
+        () => _error = 'Nhập tên đăng nhập trước khi mở camera khuôn mặt.',
+      );
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final challenge = await showFaceCamera<String>(
+        context,
+        title: 'Đăng nhập bằng khuôn mặt',
+        onCapture: (image) =>
+            widget.controller.auth.faceLogin(username: username, image: image),
+      );
+      if (challenge == null || !mounted) return;
+      widget.controller.stageFaceLogin(username, challenge);
+      setState(() {
+        _faceLoginFlow = true;
+        _otpStep = true;
+        _otpPurpose = 'login';
+        _targetUsername = username;
+        _targetEmail = null;
+        _otpController.clear();
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = _cleanErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void dispose() {
     _loginUsername.dispose();
@@ -140,6 +179,7 @@ class _AuthPageState extends State<AuthPage> {
       await widget.controller.beginLogin(uname, pass);
       if (mounted) {
         setState(() {
+          _faceLoginFlow = false;
           _otpStep = true;
           _otpPurpose = 'login';
           _targetUsername = uname;
@@ -274,6 +314,18 @@ class _AuthPageState extends State<AuthPage> {
           role: 'employee',
         );
         await widget.controller.register(newEmp, _regPassword.text);
+      } else if (_faceLoginFlow) {
+        final username = _targetUsername ?? _loginUsername.text.trim();
+        final challenge = await showFaceCamera<String>(
+          context,
+          title: 'Xác thực lại để nhận OTP mới',
+          onCapture: (image) => widget.controller.auth.faceLogin(
+            username: username,
+            image: image,
+          ),
+        );
+        if (challenge == null || !mounted) return;
+        widget.controller.stageFaceLogin(username, challenge);
       } else {
         await widget.controller.beginLogin(
           _loginUsername.text.trim(),
@@ -281,6 +333,7 @@ class _AuthPageState extends State<AuthPage> {
         );
       }
       if (mounted) {
+        _otpController.clear();
         message(context, 'Đã gửi lại mã OTP mới về email của bạn!');
       }
     } catch (e) {
@@ -688,11 +741,17 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
         const SizedBox(height: 14),
-        // NÚT ĐĂNG NHẬP SINH TRẮC HỌC (FACE ID / VÂN TAY) LUÔN HIỂN THỊ
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _handleFaceLogin,
+          icon: const Icon(Icons.face_retouching_natural),
+          label: const Text('Camera khuôn mặt + OTP'),
+        ),
+        const SizedBox(height: 8),
+        // Native device biometrics remain a separate optional shortcut.
         OutlinedButton.icon(
           onPressed: _busy ? null : _handleBiometricLogin,
           icon: const Icon(Icons.fingerprint_rounded, size: 22),
-          label: const Text('Đăng nhập bằng Face ID / Vân tay'),
+          label: const Text('Sinh trắc của điện thoại'),
           style: OutlinedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 14),
             foregroundColor: primaryColor,

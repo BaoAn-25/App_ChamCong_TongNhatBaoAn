@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "0guyCPSiukI=",
+  "success": true,
+  "projectFilePath": "c:\\Users\\Admin\\Desktop\\LapTrinhDiDong\\AppChamCong_TongNhatBaoAn\\docs\\manual-business-20261022\\files\\tool\\BusinessChecks\\Checks.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Admin\\.nuget\\packages\\microsoft.entityframeworkcore\\10.0.13\\microsoft.entityframeworkcore.10.0.13.nupkg.sha512",
+    "C:\\Users\\Admin\\.nuget\\packages\\microsoft.entityframeworkcore.abstractions\\10.0.13\\microsoft.entityframeworkcore.abstractions.10.0.13.nupkg.sha512",
+    "C:\\Users\\Admin\\.nuget\\packages\\microsoft.entityframeworkcore.analyzers\\10.0.13\\microsoft.entityframeworkcore.analyzers.10.0.13.nupkg.sha512",
+    "C:\\Users\\Admin\\.nuget\\packages\\microsoft.entityframeworkcore.relational\\10.0.13\\microsoft.entityframeworkcore.relational.10.0.13.nupkg.sha512"
+  ],
+  "logs": []
+}

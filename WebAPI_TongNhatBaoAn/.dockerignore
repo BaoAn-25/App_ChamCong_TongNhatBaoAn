@@ -4,3 +4,6 @@ obj/
 *.user
 .env
 appsettings.Development.json
+face_worker/models/
+face_worker/.venv/
+face_worker/__pycache__/

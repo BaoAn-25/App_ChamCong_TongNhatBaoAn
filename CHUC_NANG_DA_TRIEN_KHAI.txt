@@ -1,0 +1,125 @@
+﻿DANH SÁCH CHỨC NĂNG DỰ ÁN CHẤM CÔNG THÔNG MINH
+Ứng dụng: AppChamCong_TongNhatBaoAn
+Ngày tổng hợp: 22/10/2026
+Repository: https://github.com/BaoAn-25/App_ChamCong_TongNhatBaoAn
+
+PHẠM VI XÁC NHẬN
+Danh sách dưới đây được đối chiếu với mã nguồn Flutter và ASP.NET Core hiện có trong thư mục dự án, bao gồm các thay đổi chưa commit. “Đã triển khai” nghĩa là đã có code xử lý; không đồng nghĩa mọi chức năng đã kiểm thử thành công trên điện thoại hoặc đã được triển khai lên server đang chạy.
+
+1. ĐĂNG KÝ, ĐĂNG NHẬP VÀ PHÂN QUYỀN
+- Đăng ký tài khoản bằng thông tin cá nhân, email, tên đăng nhập và mật khẩu.
+- Xác minh email qua mã OTP.
+- Đăng nhập bằng mật khẩu, sau đó xác minh OTP trước khi cấp phiên đăng nhập.
+- Tích hợp gửi OTP qua dịch vụ email Brevo phía backend, cần cấu hình dịch vụ khi triển khai.
+- Quản lý phiên bằng access token và refresh token; làm mới phiên và đăng xuất.
+- Phân vai trò Admin, Manager và Employee; giới hạn thao tác theo quyền ở API.
+- Kiểm tra tài khoản đang hoạt động hoặc bị khóa.
+- Hỗ trợ khởi tạo tài khoản Admin qua cấu hình backend.
+
+2. SINH TRẮC HỌC VÀ KHUÔN MẶT
+- Bật/tắt đăng nhập nhanh bằng sinh trắc học trên thiết bị hỗ trợ.
+- Dùng cơ chế xác thực sinh trắc học của hệ điều hành và phiên refresh token đã lưu.
+- Đăng ký mẫu khuôn mặt từ camera trực tiếp với hai ảnh xác nhận.
+- Xác nhận OTP và sự đồng ý khi đăng ký mẫu khuôn mặt.
+- Kiểm tra trạng thái đã đăng ký mẫu; xóa mẫu sau xác nhận OTP.
+- Cho phép người dùng lựa chọn cho phép đăng nhập bằng khuôn mặt.
+- Đăng nhập bằng tên đăng nhập và khuôn mặt, sau đó vẫn xác minh OTP.
+- Xác thực khuôn mặt khi chấm công vào/ra; cấp bằng chứng xác thực có thời hạn, dùng một lần.
+- Backend tích hợp worker OpenCV để trích xuất và đối sánh đặc trưng; lưu mẫu được mã hóa.
+- Chức năng nhận diện cần worker, cấu hình khóa và database phù hợp khi chạy thực tế.
+
+3. QUẢN LÝ NHÂN VIÊN VÀ PHÒNG BAN
+- Xem danh sách và tìm kiếm nhân viên.
+- Thêm, sửa thông tin nhân viên theo quyền.
+- Gán phòng ban và ca làm việc cho nhân viên.
+- Quản lý vai trò và trạng thái hoạt động/khóa tài khoản theo quyền.
+- Xóa nhân viên theo điều kiện nghiệp vụ; tài khoản có lịch sử được bảo vệ.
+- Thêm, sửa, xóa và xem danh sách phòng ban theo quyền.
+
+4. QUẢN LÝ CA LÀM VIỆC
+- Thêm, sửa, xóa ca theo quyền Admin.
+- Cấu hình tên ca, giờ bắt đầu, giờ kết thúc và số phút dung sai đi trễ.
+- Hỗ trợ ca ban ngày và ca qua đêm.
+- Phân một ca hiện hành cho mỗi nhân viên.
+- Kiểm tra chưa phân ca, ca đã kết thúc, ca đang mở và ca đã hoàn tất khi chấm công.
+
+5. CẤU HÌNH VĂN PHÒNG VÀ QR
+- Admin cấu hình tên văn phòng, tọa độ GPS và bán kính chấm công.
+- Lấy vị trí thiết bị để hỗ trợ thiết lập văn phòng.
+- Backend tạo QR động có chữ ký và kiểm tra hiệu lực mã.
+- Admin hiển thị QR và sao chép mã để hỗ trợ thử nghiệm.
+- Nhân viên quét QR bằng camera; có nhập mã thủ công dự phòng.
+- Kiểm tra QR sai hoặc hết hạn trước khi ghi nhận chấm công.
+
+6. CHẤM CÔNG NHÂN VIÊN — LUỒNG MỚI
+- Thẻ “Ca hôm nay” hiển thị ca được gán, giờ ca, trạng thái và giờ vào thực tế.
+- Một nút chính đổi giữa “Chấm công vào” và “Chấm công ra”; khóa khi ca đã hoàn tất.
+- Thông báo chưa được phân ca và khóa thao tác vào ca.
+- Tự động chạy GPS -> mở camera QR -> xác thực khuôn mặt/sinh trắc học -> gửi server.
+- Checklist hiển thị tiến độ và đánh dấu các bước đã thực hiện.
+- Hiển thị khoảng cách tới văn phòng và sai số GPS.
+- Kiểm tra GPS giả, sai số vượt 80 m và vị trí ngoài bán kính.
+- Thông báo số mét cần đến gần thêm khi đứng ngoài phạm vi.
+- Lấy lại GPS sau xác thực để đáp ứng giới hạn thời gian vị trí của server.
+- Hiển thị lỗi quyền/GPS, hủy quét QR, lỗi xác thực và phản hồi lỗi từ server.
+- Có “Thử lại”; trường hợp kết quả gửi chưa rõ sẽ tải lại lịch sử trước khi chấm tiếp.
+- Hiển thị trạng thái khuôn mặt; mở phần đăng ký khuôn mặt dùng widget Tài khoản hiện có.
+- Hiển thị kết quả đúng giờ, đi trễ hoặc về sớm theo bản ghi nhận từ server.
+- Hiển thị lịch sử hôm nay: giờ vào, giờ ra và trạng thái; kèm ca đang mở để xử lý ca qua đêm.
+
+7. LỊCH SỬ VÀ BẢNG CÔNG
+- Xem lịch sử chấm công trong phạm vi quyền của tài khoản.
+- Tìm kiếm và lọc dữ liệu theo ngày.
+- Hiển thị giờ vào, giờ ra, tổng giờ công và thông tin ca.
+- Giải thích đi trễ, về sớm, ca quá giờ nhưng chưa chấm ra.
+- Sao chép dữ liệu CSV để dán vào file và mở bằng Excel.
+- API danh sách chấm công có hỗ trợ phân trang.
+
+8. ĐƠN TỪ VÀ PHÊ DUYỆT
+- Nhân viên lập đơn nghỉ phép hoặc giải trình chấm công.
+- Nhập khoảng thời gian và lý do.
+- Sửa/xóa đơn đang chờ theo điều kiện nghiệp vụ.
+- Xem trạng thái và nhận xét xử lý đơn.
+- Admin/Manager duyệt hoặc từ chối đơn theo phạm vi quyền.
+- Có kiểm tra ngăn tự duyệt và thay đổi đơn đã xử lý.
+- Chặn vào ca trong ngày nghỉ phép đã được duyệt theo xử lý backend.
+
+9. TỔNG QUAN VÀ THỐNG KÊ
+- Dashboard hiển thị thông tin tổng quan theo vai trò.
+- Thống kê theo tuần/tháng: giờ công, số ca hoàn tất, số lần và tổng phút đi trễ.
+- Tính điểm chuyên cần theo quy tắc trong ứng dụng.
+- Biểu đồ giờ công theo ngày/tuần.
+- Nhận xét về đi trễ, thiếu giờ ra, giờ công thấp và giờ công cao theo ngưỡng.
+- Bảng xếp hạng nhân viên theo giờ công cho tài khoản có quyền.
+- Phần giao diện ghi “Phân tích AI” hiện là phân tích bằng quy tắc trong code, không phải tích hợp mô hình AI sinh nội dung.
+
+10. TÀI KHOẢN VÀ TIỆN ÍCH
+- Xem thông tin cá nhân và vai trò.
+- Chỉnh sửa thông tin hồ sơ theo luồng đã có.
+- Chọn ảnh đại diện và lưu cấu hình liên quan trên thiết bị.
+- Quản lý thiết lập sinh trắc học và khuôn mặt trong Tài khoản.
+- Xem vị trí hiện tại và sao chép tọa độ ở tiện ích vị trí.
+- Làm mới dữ liệu từ server và thông báo khi đồng bộ thất bại.
+
+11. BACKEND VÀ HẠ TẦNG ĐÃ CÓ TRONG SOURCE
+- ASP.NET Core Web API, Entity Framework Core và PostgreSQL.
+- Các nhóm API: xác thực, hồ sơ hiện tại, nhân viên, phòng ban, ca, văn phòng, chấm công, đơn từ và khuôn mặt.
+- Xác thực JWT, kiểm tra vai trò, kiểm tra dữ liệu đầu vào.
+- Xử lý giờ Việt Nam trong nghiệp vụ chấm công.
+- Khóa idempotency phía API cho yêu cầu chấm công.
+- Migration database, cấu hình seed Admin, Dockerfile và cấu hình chạy worker khuôn mặt.
+- Swagger và endpoint kiểm tra tình trạng dịch vụ.
+- Có source kiểm thử mô hình, nghiệp vụ, API xác thực, phân trang, camera khuôn mặt và giao diện.
+
+12. GIỚI HẠN HIỆN TẠI / CHƯA NÊN GHI LÀ ĐÃ HOÀN THÀNH
+- Chưa có model lịch phân ca theo từng ngày hoặc nhiều ca trong cùng ngày; hiện dùng một shiftId trên nhân viên.
+- Chưa có cờ cấu hình văn phòng để bật/tắt yêu cầu QR; API hiện bắt buộc QR.
+- Liên kết từ màn Chấm công mở trang đăng ký khuôn mặt dùng lại widget Tài khoản; không thay đổi tab Tài khoản.
+- Chưa xác nhận toàn bộ luồng GPS/camera/sinh trắc học trên điện thoại thật trong lần cập nhật này.
+- Chưa xác nhận trạng thái triển khai bản code mới lên GitHub/server hoặc phát hành APK.
+- Không khẳng định nhận diện khuôn mặt có chống giả mạo/liveness cấp sản phẩm.
+- README gốc còn mô tả giai đoạn local và một số tính năng chưa làm; mô tả đó đã cũ so với source API/khuôn mặt hiện tại.
+
+KIỂM TRA BẢN SỬA MÀN CHẤM CÔNG
+- flutter analyze --no-pub lib/ui/punch_page.dart: không có lỗi/cảnh báo.
+- Kiểm thử giao diện toàn bộ và kiểm thử thiết bị cần xem kết quả chạy riêng; không dùng danh sách chức năng này làm chứng nhận kiểm thử.

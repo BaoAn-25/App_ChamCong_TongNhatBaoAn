@@ -1,3 +1,5 @@
+> Cập nhật 22/10/2026: đã bổ sung camera trực tiếp và đối sánh SFace theo nhân viên cho chấm vào/ra. Đăng nhập bằng tên tài khoản + camera khuôn mặt + OTP đã có code, cần bật quyền dùng mẫu khi đăng ký mẫu có OTP. Xem FACE_ATTENDANCE.md để deploy, test và biết giới hạn chống ảnh giả. Những bảng “giai đoạn local” bên dưới là kế hoạch ban đầu, không phải bằng chứng toàn bộ trạng thái hiện tại.
+
 # Đối chiếu đề kiểm tra — Nhóm 09
 
 Tên thư mục: `AppChamCong_TongNhatBaoAn`.

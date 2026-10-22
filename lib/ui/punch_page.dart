@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../domain/app_controller.dart';
+import '../domain/models.dart';
+import '../data/face_service.dart';
+import '../data/api_client.dart';
+import 'face_camera_page.dart';
+import 'face_page.dart';
 import 'biometric_page.dart';
 import 'common.dart';
 import 'home_page.dart' show acquirePosition;
@@ -18,379 +20,544 @@ class PunchPage extends StatefulWidget {
 }
 
 class _PunchPageState extends State<PunchPage> {
-  Position? position;
-  DateTime? capturedAt;
-  String? qr;
   bool busy = false;
-  String? error;
-  String? _addressText;
-  Future<void> run(Future<void> Function() fn) async {
+  bool? enrolled;
+  bool needsEnrollment = false;
+  bool reconcile = false;
+  String? error, result, gpsDetail;
+  int step = -1;
+  final done = <int>{};
+  AppController get c => widget.controller;
+  Shift? get shift =>
+      c.data.shifts.where((s) => s.id == c.user?.shiftId).firstOrNull;
+  List<Attendance> get history =>
+      c.data.attendance
+          .where(
+            (a) =>
+                a.employeeId == c.user?.id &&
+                (dayKey(a.checkIn) == dayKey(DateTime.now()) ||
+                    (a.checkOut != null &&
+                        dayKey(a.checkOut!) == dayKey(DateTime.now())) ||
+                    a.checkOut == null),
+          )
+          .toList()
+        ..sort((a, b) => b.checkIn.compareTo(a.checkIn));
+  Attendance? get current {
+    if (c.openAttendance != null) return c.openAttendance;
+    final s = shift;
+    if (s == null) return null;
+    var anchor = DateTime.now();
+    if (s.endMinute < s.startMinute &&
+        anchor.hour * 60 + anchor.minute < s.endMinute) {
+      anchor = anchor.subtract(const Duration(days: 1));
+    }
+    return c.data.attendance
+        .where(
+          (a) =>
+              a.employeeId == c.user?.id &&
+              dayKey(a.scheduledEnd) == dayKey(s.endOn(anchor)),
+        )
+        .firstOrNull;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    c.addListener(_changed);
+    _loadFace();
+  }
+
+  @override
+  void didUpdateWidget(covariant PunchPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != c) {
+      oldWidget.controller.removeListener(_changed);
+      c.addListener(_changed);
+      _loadFace();
+    }
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadFace() async {
+    try {
+      final value = await FaceService(c.client).status();
+      if (mounted) setState(() => enrolled = value);
+    } catch (_) {
+      if (mounted) setState(() => enrolled = null);
+    }
+  }
+
+  @override
+  void dispose() {
+    c.removeListener(_changed);
+    super.dispose();
+  }
+
+  Future<void> _account() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Tài khoản • Khuôn mặt')),
+          body: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [FaceSettingsCard(controller: c)],
+          ),
+        ),
+      ),
+    );
+    if (mounted) await _loadFace();
+  }
+
+  Future<Position> _gps() async {
+    final p = await acquirePosition();
+    if (!mounted) throw StateError('Đã rời màn chấm công.');
+    final office = c.data.office;
+    if (!office.configured) {
+      throw StateError('Văn phòng chưa được cấu hình. Liên hệ Admin.');
+    }
+    final distance = Geolocator.distanceBetween(
+      p.latitude,
+      p.longitude,
+      office.latitude!,
+      office.longitude!,
+    );
+    setState(
+      () => gpsDetail =
+          'Cách văn phòng ${distance.round()} m • Sai số ±${p.accuracy.round()} m',
+    );
+    if (p.isMocked) {
+      throw StateError(
+        'Vị trí giả không được chấp nhận. Hãy tắt ứng dụng giả lập GPS.',
+      );
+    }
+    if (!p.accuracy.isFinite || p.accuracy < 0 || p.accuracy > 80) {
+      throw StateError(
+        'GPS yếu (sai số vượt 80 m). Hãy đến nơi thoáng và thử lại.',
+      );
+    }
+    if (distance > office.radius) {
+      throw StateError(
+        'Ngoài bán kính văn phòng. Cần đến gần thêm ${(distance - office.radius).ceil()} m.',
+      );
+    }
+    return p;
+  }
+
+  Future<void> _run() async {
     if (busy) return;
     setState(() {
       busy = true;
       error = null;
+      result = null;
+      needsEnrollment = false;
+      done.clear();
+      step = -1;
     });
     try {
-      await fn();
-    } catch (e) {
-      if (mounted) {
-        setState(() => error = e.toString().replaceFirst("Exception: ", ""));
+      // Refresh before choosing in/out, also reconciling an uncertain prior request.
+      await c.syncAll();
+      if (!mounted) return;
+      if (c.syncError != null || c.isSyncing) {
+        throw StateError(
+          'Chưa cập nhật được ca và lịch sử. Kiểm tra mạng rồi thử lại.',
+        );
       }
+      if (reconcile) {
+        reconcile = false;
+        setState(
+          () => result =
+              'Đã cập nhật lịch sử. Kiểm tra giờ đã ghi nhận trước khi chấm công tiếp.',
+        );
+        return;
+      }
+      final attendance = current;
+      if (attendance?.checkOut != null) {
+        setState(() => result = 'Bạn đã hoàn tất ca này.');
+        return;
+      }
+      if (shift == null && c.openAttendance == null) {
+        throw StateError('Bạn chưa được phân ca. Vui lòng liên hệ Admin.');
+      }
+      final checkingOut = c.openAttendance != null;
+      final openId = c.openAttendance?.id;
+      setState(() => step = 0);
+      var p = await _gps();
+      if (!mounted) return;
+      setState(() {
+        done.add(0);
+        step = 1;
+      });
+      // The current API requires QR for every office; no optional-QR flag exists.
+      final qr = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(builder: (_) => const ScannerPage()),
+      );
+      if (!mounted) return;
+      if (qr == null || qr.trim().isEmpty) {
+        throw StateError('Đã hủy quét QR. Thử lại để tiếp tục.');
+      }
+      setState(() {
+        done.add(1);
+        step = 2;
+      });
+      final faces = FaceService(c.client);
+      final hasFace = await faces.status();
+      if (!mounted) return;
+      setState(() => enrolled = hasFace);
+      String? proof;
+      if (hasFace) {
+        proof = await showFaceCamera<String>(
+          context,
+          title: checkingOut
+              ? 'Xác thực khuôn mặt để ra ca'
+              : 'Xác thực khuôn mặt để vào ca',
+          onCapture: (image) =>
+              faces.verify(image, checkingOut ? 'check-out' : 'check-in'),
+        );
+        if (!mounted) return;
+        if (proof == null) {
+          throw StateError('Đã hủy xác thực khuôn mặt. Hãy thử lại.');
+        }
+      } else if (await BiometricLoginHelper.isEnabled) {
+        if (!await BiometricLoginHelper.authenticate()) {
+          throw StateError(
+            'Xác thực sinh trắc học chưa thành công. Hãy thử lại.',
+          );
+        }
+      } else {
+        needsEnrollment = true;
+        throw StateError(
+          'Chưa đăng ký khuôn mặt. Mở Tài khoản để đăng ký trước khi chấm công.',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        done.add(2);
+        step = 0;
+        done.remove(0);
+      });
+      // Verification may outlive the server's 60-second GPS freshness window.
+      p = await _gps();
+      if (!mounted) return;
+      setState(() {
+        done.add(0);
+        step = 3;
+      });
+      if (c.openAttendance?.id != openId) {
+        throw StateError('Trạng thái ca đã thay đổi. Hãy thử lại.');
+      }
+      reconcile = true;
+      final office = c.data.office;
+      await c.punch(
+        qr: qr.trim(),
+        faceProof: proof,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        accuracy: p.accuracy,
+        distance: Geolocator.distanceBetween(
+          p.latitude,
+          p.longitude,
+          office.latitude!,
+          office.longitude!,
+        ),
+        capturedAt: p.timestamp,
+        mocked: p.isMocked,
+      );
+      if (!mounted) return;
+      if (c.syncError != null) {
+        throw StateError(
+          'Đã gửi chấm công nhưng chưa tải được kết quả. Thử lại để cập nhật lịch sử.',
+        );
+      }
+      reconcile = false;
+      final saved = checkingOut
+          ? c.data.attendance.where((a) => a.id == openId).firstOrNull
+          : c.openAttendance;
+      setState(() {
+        done.add(3);
+        result = saved == null
+            ? 'Đã gửi chấm công. Vui lòng kiểm tra lịch sử.'
+            : '${checkingOut ? 'Chấm công ra' : 'Chấm công vào'} thành công • ${_timing(saved, checkingOut)}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      if (e is ApiException && e.statusCode >= 400 && e.statusCode < 500) {
+        reconcile = false;
+      }
+      final message = e.toString().replaceFirst(
+        RegExp(r'^(Exception: |StateError: |Bad state: )'),
+        '',
+      );
+      setState(() {
+        error = message;
+        if (message.toLowerCase().contains('qr')) {
+          step = 1;
+          done.remove(1);
+        }
+      });
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
+  static String _timing(Attendance a, bool out) {
+    if (out && a.checkOut != null) {
+      final early = a.scheduledEnd.difference(a.checkOut!).inMinutes;
+      return early > 0 ? 'Về sớm $early phút' : 'Đúng giờ';
+    }
+    return a.lateMinutes > 0 ? 'Đi trễ ${a.lateMinutes} phút' : 'Đúng giờ';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final c = widget.controller, office = c.data.office;
-    final distance = position != null && office.configured
-        ? Geolocator.distanceBetween(
-            position!.latitude,
-            position!.longitude,
-            office.latitude!,
-            office.longitude!,
-          )
-        : null;
+    final a = current;
+    final completed = a?.checkOut != null;
+    final allowed =
+        (shift != null || c.openAttendance != null) &&
+        c.data.office.configured &&
+        !completed;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        _ShiftCard(shift: shift, attendance: a),
+        const SizedBox(height: 16),
+        Text(
+          '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m',
+        ),
+        if (!c.data.office.configured)
+          const Text('Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.'),
+        const SizedBox(height: 8),
+        Text(
+          enrolled == null
+              ? 'Khuôn mặt: chưa kiểm tra được'
+              : enrolled!
+              ? 'Khuôn mặt: đã đăng ký'
+              : 'Khuôn mặt: Chưa đăng ký',
+        ),
+        if (enrolled == false)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: busy ? null : _account,
+              child: const Text('Mở Tài khoản để đăng ký'),
+            ),
+          ),
+        const SizedBox(height: 16),
+        _PunchButton(
+          busy: busy,
+          label: completed
+              ? 'Đã hoàn tất'
+              : c.openAttendance == null
+              ? 'Chấm công vào'
+              : 'Chấm công ra',
+          onPressed: !busy && allowed && error == null ? _run : null,
+        ),
+        const SizedBox(height: 16),
+        _StepChecklist(
+          active: step,
+          done: done,
+          failed: error != null,
+          gpsDetail: gpsDetail,
+        ),
+        if (error != null)
+          _PunchError(
+            message: error!,
+            onRetry: busy ? null : _run,
+            onAccount: needsEnrollment && !busy ? _account : null,
+          ),
+        if (result != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              result!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        const SizedBox(height: 20),
         Section(
-          title: c.openAttendance == null
-              ? 'Bắt đầu ca làm'
-              : 'Kết thúc ca làm',
-          subtitle: office.configured
-              ? '${office.name} • Phạm vi ${office.radius.round()} m'
-              : 'Vui lòng nhờ Admin cấu hình văn phòng',
+          title: 'Lịch sử chấm công hôm nay',
+          subtitle: 'Giờ đã được ghi nhận trên hệ thống',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Lấy vị trí → Quét QR → Xác nhận giờ vào / ra'),
-              const SizedBox(height: 8),
-              const Text(
-                'Xác thực sinh trắc học bổ sung khi bạn đã kích hoạt trong Tài khoản.',
-              ),
-              if (error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+              if (history.isEmpty)
+                const Text('Chưa có lượt chấm công hôm nay.'),
+              for (final item in history)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(item.shiftName),
+                  subtitle: Text(
+                    'Vào: ${clock(item.checkIn)} • Ra: ${clock(item.checkOut)}\n'
+                    '${item.checkOut == null ? 'Đang trong ca' : 'Đã hoàn tất'} • ${_timing(item, false)}'
+                    '${item.checkOut != null ? ' • ${_timing(item, true)}' : ''}',
                   ),
+                  isThreeLine: true,
                 ),
-              const SizedBox(height: 20),
-              // --- HIỂN THỊ VỊ TRÍ CHI TIẾT ---
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: position == null
-                      ? const Color(0xFFF8FAFC)
-                      : const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: position == null
-                        ? const Color(0xFFE2E8F0)
-                        : const Color(0xFF86EFAC),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          position == null
-                              ? Icons.location_searching_rounded
-                              : Icons.location_on_rounded,
-                          color: position == null
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF16A34A),
-                          size: 22,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            position == null
-                                ? 'Chưa lấy vị trí'
-                                : 'Đã xác định vị trí',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: position == null
-                                  ? const Color(0xFF64748B)
-                                  : const Color(0xFF065F46),
-                            ),
-                          ),
-                        ),
-                        if (position != null && distance != null)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: distance <= office.radius
-                                  ? const Color(0xFF16A34A).withValues(alpha: 0.1)
-                                  : Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              'Cách VP ${distance.round()} m',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: distance <= office.radius
-                                    ? const Color(0xFF16A34A)
-                                    : Colors.red.shade700,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    if (position != null) ...[
-                      const SizedBox(height: 8),
-                      // Địa chỉ
-                      if (_addressText != null)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.home_rounded, size: 14, color: Color(0xFF0284C7)),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  _addressText!,
-                                  style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      Row(
-                        children: [
-                          const Icon(Icons.gps_fixed_rounded, size: 14, color: Color(0xFF64748B)),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              '${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}  •  ±${position!.accuracy.round()} m',
-                              style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Color(0xFF64748B)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ] else
-                      const Padding(
-                        padding: EdgeInsets.only(top: 4),
-                        child: Text(
-                          'Chỉ thu thập khi bạn chủ động chấm công.',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: busy
-                    ? null
-                    : () => run(() async {
-                        final p = await acquirePosition();
-                        // Reverse geocode để lấy địa chỉ
-                        String? addr;
-                        try {
-                          final placemarks = await geo.Geocoding().placemarkFromCoordinates(
-                            p.latitude,
-                            p.longitude,
-                          );
-                          if (placemarks.isNotEmpty) {
-                            final pm = placemarks.first;
-                            final parts = <String>[
-                              if (pm.street != null && pm.street!.isNotEmpty) pm.street!,
-                              if (pm.subLocality != null && pm.subLocality!.isNotEmpty) pm.subLocality!,
-                              if (pm.locality != null && pm.locality!.isNotEmpty) pm.locality!,
-                              if (pm.subAdministrativeArea != null && pm.subAdministrativeArea!.isNotEmpty) pm.subAdministrativeArea!,
-                              if (pm.administrativeArea != null && pm.administrativeArea!.isNotEmpty) pm.administrativeArea!,
-                            ];
-                            addr = parts.join(', ');
-                          }
-                        } catch (_) {}
-                        if (mounted) {
-                          setState(() {
-                            position = p;
-                            capturedAt = p.timestamp;
-                            _addressText = addr;
-                          });
-                        }
-                      }),
-                icon: const Icon(Icons.my_location_rounded),
-                label: const Text('Lấy / cập nhật vị trí'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF087F8C),
-                  side: const BorderSide(color: Color(0xFF087F8C)),
-                ),
-              ),
-              if (position != null) ...[
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: busy
-                            ? null
-                            : () => run(() async {
-                                final p = position!;
-                                final shareText =
-                                    '📍 Vị trí chấm công lúc ${capturedAt!.toLocal().toString().substring(0, 19)}\n'
-                                    '${_addressText != null ? '🏠 $_addressText\n' : ''}'
-                                    '📌 Tọa độ: ${p.latitude.toStringAsFixed(6)}, ${p.longitude.toStringAsFixed(6)}\n'
-                                    '🎯 Sai số: ±${p.accuracy.round()} m\n'
-                                    '🗺️ https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}';
-                                await SharePlus.instance.share(
-                                  ShareParams(text: shareText),
-                                );
-                              }),
-                        icon: const Icon(Icons.share_rounded, size: 18),
-                        label: const Text('Chia sẻ', style: TextStyle(fontSize: 13)),
-                      ),
-                    ),
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () async {
-                          final uri = Uri.parse(
-                            'https://www.google.com/maps/search/?api=1&query=${position!.latitude},${position!.longitude}',
-                          );
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri, mode: LaunchMode.externalApplication);
-                          }
-                        },
-                        icon: const Icon(Icons.map_rounded, size: 18),
-                        label: const Text('Google Maps', style: TextStyle(fontSize: 13)),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const Divider(height: 30),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  qr == null
-                      ? Icons.qr_code_scanner
-                      : Icons.check_circle_outline,
-                  color: const Color(0xFF087F8C),
-                ),
-                title: Text(
-                  qr == null ? 'Chưa quét QR văn phòng' : 'Đã nhận mã QR',
-                ),
-                subtitle: const Text(
-                  'Mã được kiểm tra lại khi xác nhận chấm công.',
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: busy
-                    ? null
-                    : () async {
-                        final result = await Navigator.push<String>(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const ScannerPage(),
-                          ),
-                        );
-                        if (mounted && result != null) {
-                          setState(() => qr = result);
-                        }
-                      },
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Mở camera quét QR'),
-              ),
-              TextButton(
-                onPressed: busy
-                    ? null
-                    : () => editForm(
-                        context,
-                        title: 'Nhập mã QR thủ công',
-                        fields: {'Mã QR': ''},
-                        save: (v) async {
-                          if (v.values.first.isEmpty) {
-                            throw ArgumentError('Hãy nhập mã.');
-                          }
-                          setState(() => qr = v.values.first);
-                        },
-                      ),
-                child: const Text('Nhập mã QR nếu camera không quét được'),
-              ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed:
-                    busy || position == null || qr == null || !office.configured
-                    ? null
-                    : () => run(() async {
-                        if (await BiometricLoginHelper.isEnabled &&
-                            !await BiometricLoginHelper.authenticate()) {
-                          throw Exception(
-                            'Xác thực sinh trắc học chưa thành công. Vui lòng thử lại.',
-                          );
-                        }
-                        // Capture again after the device prompt, which may outlive the GPS freshness window.
-                        final fresh = await acquirePosition();
-                        if (!mounted) return;
-                        setState(() {
-                          position = fresh;
-                          capturedAt = fresh.timestamp;
-                        });
-                        final checkingOut = c.openAttendance != null;
-                        await c.punch(
-                          qr: qr!,
-                          latitude: position!.latitude,
-                          longitude: position!.longitude,
-                          accuracy: position!.accuracy,
-                          distance: Geolocator.distanceBetween(
-                            position!.latitude,
-                            position!.longitude,
-                            office.latitude!,
-                            office.longitude!,
-                          ),
-                          capturedAt: capturedAt!,
-                          mocked: position!.isMocked,
-                        );
-                        if (context.mounted) {
-                          setState(() {
-                            qr = null;
-                            position = null;
-                            capturedAt = null;
-                          });
-                          message(
-                            context,
-                            checkingOut
-                                ? 'Đã ghi nhận giờ ra.'
-                                : 'Đã ghi nhận giờ vào. Chúc bạn một ca làm tốt!',
-                          );
-                        }
-                      }),
-                icon: busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.fingerprint),
-                label: Text(
-                  busy
-                      ? 'Đang xử lý…'
-                      : c.openAttendance == null
-                      ? 'Xác nhận giờ vào'
-                      : 'Xác nhận giờ ra',
-                ),
-              ),
             ],
           ),
         ),
       ],
     );
   }
+}
+
+class _ShiftCard extends StatelessWidget {
+  final Shift? shift;
+  final Attendance? attendance;
+  const _ShiftCard({required this.shift, required this.attendance});
+  String _time(int minute) =>
+      '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}';
+  @override
+  Widget build(BuildContext context) => Section(
+    title: 'Ca hôm nay',
+    subtitle: attendance == null
+        ? 'Chưa vào ca'
+        : attendance!.checkOut == null
+        ? 'Đang trong ca'
+        : 'Đã hoàn tất',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          attendance?.shiftName ?? shift?.name ?? 'Chưa được phân ca',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        if (shift != null &&
+            (attendance == null || attendance!.shiftName == shift!.name))
+          Text('${_time(shift!.startMinute)} – ${_time(shift!.endMinute)}'),
+        if (attendance != null)
+          Text('Giờ vào thực tế: ${clock(attendance!.checkIn)}'),
+        if (shift == null && attendance == null) ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            items: const [],
+            onChanged: null,
+            decoration: const InputDecoration(
+              labelText: 'Chưa có ca được phân công',
+            ),
+          ),
+          const Text(
+            'Bạn chưa được phân ca. Liên hệ Admin để được phân ca; chấm công đang khóa.',
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+class _PunchButton extends StatelessWidget {
+  final bool busy;
+  final String label;
+  final VoidCallback? onPressed;
+  const _PunchButton({required this.busy, required this.label, this.onPressed});
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    child: FilledButton.icon(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+      ),
+      icon: busy
+          ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.fingerprint),
+      label: Text(busy ? 'Đang xác minh…' : label),
+    ),
+  );
+}
+
+class _StepChecklist extends StatelessWidget {
+  final int active;
+  final Set<int> done;
+  final bool failed;
+  final String? gpsDetail;
+  const _StepChecklist({
+    required this.active,
+    required this.done,
+    required this.failed,
+    this.gpsDetail,
+  });
+  @override
+  Widget build(BuildContext context) {
+    const labels = [
+      'Kiểm tra vị trí GPS',
+      'Quét QR văn phòng',
+      'Xác thực khuôn mặt / sinh trắc học',
+      'Gửi và ghi nhận giờ',
+    ];
+    return Column(
+      children: [
+        for (var i = 0; i < labels.length; i++)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: done.contains(i)
+                ? const Icon(Icons.check_circle, color: Colors.green)
+                : active == i && !failed
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    active == i && failed
+                        ? Icons.error_outline
+                        : Icons.radio_button_unchecked,
+                    color: active == i && failed
+                        ? Theme.of(context).colorScheme.error
+                        : null,
+                  ),
+            title: Text('${i + 1}. ${labels[i]}'),
+            subtitle: i == 0 && gpsDetail != null
+                ? Text(gpsDetail!)
+                : i == 1 && done.contains(1)
+                ? const Text('Đã nhận mã; server kiểm tra khi ghi giờ.')
+                : null,
+          ),
+      ],
+    );
+  }
+}
+
+class _PunchError extends StatelessWidget {
+  final String message;
+  final VoidCallback? onRetry, onAccount;
+  const _PunchError({required this.message, this.onRetry, this.onAccount});
+  @override
+  Widget build(BuildContext context) => Card(
+    color: Theme.of(context).colorScheme.errorContainer,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+          ),
+          TextButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Thử lại'),
+          ),
+          if (onAccount != null)
+            TextButton(onPressed: onAccount, child: const Text('Mở Tài khoản')),
+        ],
+      ),
+    ),
+  );
 }
 
 class ScannerPage extends StatefulWidget {
@@ -402,6 +569,33 @@ class ScannerPage extends StatefulWidget {
 class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
   final scanner = MobileScannerController(formats: [BarcodeFormat.qrCode]);
   bool returned = false;
+  bool enteringManually = false;
+
+  Future<void> _manual() async {
+    if (returned || enteringManually) return;
+    setState(() => enteringManually = true);
+    try {
+      await editForm(
+        context,
+        title: 'Nhập mã QR thủ công',
+        fields: {'Mã QR': ''},
+        save: (values) async {
+          final code = values['Mã QR']!.trim();
+          if (!code.startsWith('BAOAN:')) {
+            throw ArgumentError('Mã QR phải bắt đầu bằng BAOAN:.');
+          }
+          returned = true;
+          // editForm closes its own dialog before this route is closed.
+          manualCode = code;
+        },
+      );
+      if (mounted && manualCode != null) Navigator.pop(context, manualCode);
+    } finally {
+      if (mounted) setState(() => enteringManually = false);
+    }
+  }
+
+  String? manualCode;
   @override
   void initState() {
     super.initState();
@@ -452,11 +646,18 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
                   .where((b) => b.rawValue?.startsWith('BAOAN:') ?? false)
                   .firstOrNull
                   ?.rawValue;
-              if (value != null && !returned) {
+              if (value != null && !returned && !enteringManually) {
                 returned = true;
                 Navigator.pop(context, value);
               }
             },
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: TextButton(
+            onPressed: enteringManually ? null : _manual,
+            child: const Text('Nhập mã thủ công'),
           ),
         ),
       ],

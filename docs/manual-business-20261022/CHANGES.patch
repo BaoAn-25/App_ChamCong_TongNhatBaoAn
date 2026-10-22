@@ -1,0 +1,3231 @@
+--- a/WebAPI_TongNhatBaoAn/Controllers/ApprovalController.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/ApprovalController.cs
+@@ -0,0 +1,33 @@
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using WebAPI_TongNhatBaoAn.Data;
++using WebAPI_TongNhatBaoAn.Dtos;
++using WebAPI_TongNhatBaoAn.Models;
++namespace WebAPI_TongNhatBaoAn.Controllers;
++
++public record ApprovalReview(bool Approve, string Note, uint Version);
++[ApiController, Route("api/registrations"), Authorize(Roles = Roles.Admin)]
++public sealed class ApprovalController(AppDb db) : ApiBase
++{
++    [HttpGet("pending")]
++    public async Task<IActionResult> Pending() => Ok(await db.Employees.AsNoTracking()
++        .Where(e => e.ApprovalStatus == ApprovalStatus.PendingApproval && e.EmailVerified)
++        .OrderBy(e => e.CreatedAt).Select(e => new { user = EmployeeDto.From(e), e.Version }).ToListAsync());
++    [HttpPost("{id:guid}/review")]
++    public async Task<IActionResult> Review(Guid id, ApprovalReview r)
++    {
++        var employee = await db.Employees.FindAsync(id);
++        if (employee == null) return Fail("Không tìm thấy tài khoản.",404);
++        if (employee.Id == UserId || !employee.EmailVerified || employee.ApprovalStatus != ApprovalStatus.PendingApproval)
++            return Fail("Chỉ duyệt tài khoản đã xác minh email và đang chờ duyệt.",409);
++        if (string.IsNullOrWhiteSpace(r.Note)) return Fail("Nhập ghi chú duyệt hoặc từ chối.");
++        db.Entry(employee).Property(e => e.Version).OriginalValue = r.Version;
++        employee.Role = Roles.Employee;
++        employee.ApprovalStatus = r.Approve ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
++        employee.ApprovedBy = UserId; employee.ApprovedAt = DateTime.UtcNow; employee.ApprovalNote = r.Note.Trim();
++        try { await db.SaveChangesAsync(); }
++        catch (DbUpdateConcurrencyException) { return Fail("Tài khoản vừa được xử lý. Hãy tải lại.",409); }
++        return Ok(EmployeeDto.From(employee));
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Controllers/AttendanceController.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/AttendanceController.cs
+@@ -0,0 +1,34 @@
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using WebAPI_TongNhatBaoAn.Data;
++using WebAPI_TongNhatBaoAn.Dtos;
++using WebAPI_TongNhatBaoAn.Models;
++using WebAPI_TongNhatBaoAn.Services;
++namespace WebAPI_TongNhatBaoAn.Controllers;
++
++[ApiController, Route("api/attendance"), Authorize]
++public sealed class AttendanceController(AppDb db, AttendanceService service) : ApiBase
++{
++    [HttpPost("check-in")]
++    public async Task<IActionResult> CheckIn(PunchRequest r) => Ok(await service.PunchAsync(UserId, r, true));
++    [HttpPost("check-out")]
++    public async Task<IActionResult> CheckOut(PunchRequest r) => Ok(await service.PunchAsync(UserId, r, false));
++    [HttpGet]
++    public async Task<IActionResult> List(DateOnly? from, DateOnly? to, Guid? employeeId, int page = 1, int pageSize = 50)
++    {
++        if (from > to || from?.Year is < 1970 or > 9998 || to?.Year is < 1970 or > 9998)
++            return Fail("Khoảng ngày không hợp lệ.");
++        await service.CloseOverdueAsync();
++        page = Math.Clamp(page, 1, 1000000); pageSize = Math.Clamp(pageSize, 1, 100);
++        var scope = User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Manager) ? employeeId : UserId;
++        var q = db.Attendance.AsNoTracking();
++        if (scope != null) q = q.Where(a => a.EmployeeId == scope);
++        if (from != null) { var lower = TimeVn.ToUtc(from.Value.ToDateTime(TimeOnly.MinValue)); q = q.Where(a => a.CheckIn >= lower); }
++        if (to != null) { var upper = TimeVn.ToUtc(to.Value.AddDays(1).ToDateTime(TimeOnly.MinValue)); q = q.Where(a => a.CheckIn < upper); }
++        var total = await q.CountAsync();
++        var rows = await q.OrderByDescending(a => a.CheckIn).ThenByDescending(a => a.Id).Skip((page - 1) * pageSize).Take(pageSize)
++            .Join(db.Employees, a => a.EmployeeId, e => e.Id, (a,e) => new { a, e.Name }).ToListAsync();
++        return Ok(new PagedResult<AttendanceDto>(total, page, pageSize, rows.Select(x => BusinessRules.Dto(x.a, x.Name)).ToList()));
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Controllers/Controllers.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/Controllers.cs
+@@ -38,7 +38,8 @@
+         var emp = existing ?? new Employee
+         {
+             Name = r.Name.Trim(), Email = email, Username = username,
+-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password), Role = Roles.Employee
++            PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password), Role = Roles.Employee,
++            ApprovalStatus = ApprovalStatus.PendingApproval
+         };
+         if (existing == null) db.Employees.Add(emp);
+         var (challenge, code) = otp.Create(emp.Id, Verify);
+@@ -63,7 +64,7 @@
+         if (emp == null) return Fail(error!, 400);
+         emp.EmailVerified = true;
+         await db.SaveChangesAsync();
+-        return Ok(new { verified = true });
++        return Ok(new { verified = true, approvalStatus = emp.ApprovalStatus, message = "Email đã xác minh. Tài khoản cần Admin duyệt trước khi đăng nhập." });
+     }
+ 
+     [HttpPost("login")]
+@@ -75,6 +76,7 @@
+         if (emp == null || !passwordOk || !emp.Active || !emp.EmailVerified)
+             return Fail("Tên đăng nhập hoặc mật khẩu không đúng, tài khoản bị khóa hoặc chưa xác minh email.", 401);
+ 
++        if (emp.ApprovalStatus != ApprovalStatus.Approved) return Fail("Tài khoản đang chờ duyệt hoặc đã bị từ chối. Liên hệ Admin.", 403);
+         var (challenge, code) = otp.Create(emp.Id, Login);
+         await db.SaveChangesAsync();
+         try { await otp.SendAsync(emp.Email, "Mã OTP đăng nhập", code); }
+@@ -92,7 +94,7 @@
+     {
+         var (emp, error) = await otp.VerifyAsync(r.ChallengeId, r.Code, Login);
+         if (emp == null) return Fail(error!, 401);
+-        if (!emp.Active || !emp.EmailVerified) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
++        if (!BusinessRules.CanUse(emp)) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
+         return Ok(await IssueAsync(emp));
+     }
+ 
+@@ -104,7 +106,7 @@
+         if (stored == null || stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+             return Fail("Phiên đăng nhập hết hạn.", 401);
+         var emp = await db.Employees.FindAsync(stored.EmployeeId);
+-        if (emp == null || !emp.Active) return Fail("Phiên đăng nhập hết hạn.", 401);
++        if (emp == null || !BusinessRules.CanUse(emp)) return Fail("Phiên đăng nhập hết hạn.", 401);
+         stored.Revoked = true;
+         return Ok(await IssueAsync(emp));
+     }
+@@ -134,7 +136,7 @@
+     public async Task<IActionResult> Get()
+     {
+         var emp = await db.Employees.FindAsync(UserId);
+-        return emp == null || !emp.Active ? Fail("Vui lòng đăng nhập lại.", 401) : Ok(EmployeeDto.From(emp));
++        return emp == null || !BusinessRules.CanUse(emp) ? Fail("Vui lòng đăng nhập lại.", 401) : Ok(EmployeeDto.From(emp));
+     }
+ }
+ 
+@@ -161,7 +163,7 @@
+         var emp = new Employee
+         {
+             Name = r.Name.Trim(), Email = email, Username = username, Department = r.Department?.Trim() ?? "",
+-            Role = role, ShiftId = r.ShiftId, EmailVerified = true,
++            Role = role, ShiftId = r.ShiftId, EmailVerified = true, ApprovalStatus = ApprovalStatus.Approved,
+             PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password)
+         };
+         db.Employees.Add(emp);
+@@ -233,7 +235,8 @@
+ 
+     private static string? Check(ShiftUpsert r) =>
+         string.IsNullOrWhiteSpace(r.Name) || r.StartMinute is < 0 or >= 1440 || r.EndMinute is < 0 or >= 1440 ||
+-        r.StartMinute == r.EndMinute || r.Grace is < 0 or > 60
++        r.StartMinute == r.EndMinute || r.Grace is < 0 or > 60 || r.BreakMinutes is < 0 ||
++        r.BreakMinutes.GetValueOrDefault() >= (r.EndMinute-r.StartMinute+1440)%1440 || r.EarlyLeaveGraceMinutes is < 0 or > 60
+             ? "Ca phải có tên, giờ vào/ra khác nhau và dung sai từ 0–60 phút."
+             : null;
+ 
+@@ -242,7 +245,7 @@
+     {
+         var err = Check(r);
+         if (err != null) return Fail(err);
+-        var s = new Shift { Name = r.Name.Trim(), StartMinute = r.StartMinute, EndMinute = r.EndMinute, Grace = r.Grace };
++        var s = new Shift { Name = r.Name.Trim(), StartMinute = r.StartMinute, EndMinute = r.EndMinute, Grace = r.Grace, BreakMinutes = r.BreakMinutes ?? 0, EarlyLeaveGraceMinutes = r.EarlyLeaveGraceMinutes ?? 5 };
+         db.Shifts.Add(s);
+         await db.SaveChangesAsync();
+         return Created($"/api/shifts/{s.Id}", ShiftDto.From(s));
+@@ -255,7 +258,8 @@
+         if (err != null) return Fail(err);
+         var s = await db.Shifts.FindAsync(id);
+         if (s == null) return Fail("Không tìm thấy ca.", 404);
+-        s.Name = r.Name.Trim(); s.StartMinute = r.StartMinute; s.EndMinute = r.EndMinute; s.Grace = r.Grace;
++        if ((r.BreakMinutes ?? s.BreakMinutes) >= (r.EndMinute-r.StartMinute+1440)%1440) return Fail("Thời gian nghỉ phải ngắn hơn ca.");
++        s.Name = r.Name.Trim(); s.StartMinute = r.StartMinute; s.EndMinute = r.EndMinute; s.Grace = r.Grace; s.BreakMinutes = r.BreakMinutes ?? s.BreakMinutes; s.EarlyLeaveGraceMinutes = r.EarlyLeaveGraceMinutes ?? s.EarlyLeaveGraceMinutes;
+         await db.SaveChangesAsync();
+         return Ok(ShiftDto.From(s));
+     }
+@@ -378,215 +382,3 @@
+     }
+ }
+ 
+-[ApiController, Route("api/attendance"), Authorize]
+-public class AttendanceController(AppDb db, QrService qr, FaceAttendancePolicy face) : ApiBase
+-{
+-    private static AttendanceDto ToDto(Attendance a, string? name) => new(a.Id, a.EmployeeId, name, a.ShiftName,
+-        a.WorkDate, a.CheckIn, a.ScheduledEnd, a.LateMinutes, a.Latitude, a.Longitude, a.Accuracy, a.CheckOut,
+-        a.OutLatitude, a.OutLongitude);
+-
+-    private string? ValidatePunch(PunchRequest r, Office o, DateTime now)
+-    {
+-        if (!o.Configured) return "Admin chưa cấu hình văn phòng.";
+-        if (string.IsNullOrWhiteSpace(r.IdempotencyKey) || r.IdempotencyKey.Length > 100) return "Thiếu mã yêu cầu (idempotencyKey).";
+-        if (!qr.IsValid(o.QrSecret, r.Qr, now)) return "QR sai hoặc hết hạn. Quét mã mới từ Admin.";
+-        var captured = r.CapturedAt.ToUniversalTime();
+-        if (r.IsMocked || !double.IsFinite(r.Accuracy) || r.Accuracy < 0 || r.Accuracy > 80 ||
+-            !double.IsFinite(r.Latitude) || Math.Abs(r.Latitude) > 90 ||
+-            !double.IsFinite(r.Longitude) || Math.Abs(r.Longitude) > 180 ||
+-            (now - captured).TotalSeconds > 60 || captured > now.AddSeconds(5))
+-            return "Vị trí không hợp lệ hoặc độ chính xác kém. Hãy lấy GPS mới, tắt vị trí giả.";
+-        var distance = GeoService.DistanceMeters(r.Latitude, r.Longitude, o.Latitude!.Value, o.Longitude!.Value);
+-        return distance > o.Radius
+-            ? $"Bạn cách văn phòng {Math.Round(distance)} m, ngoài bán kính {Math.Round(o.Radius)} m."
+-            : null;
+-    }
+-
+-    private async Task<Office?> OfficeAsync() => await db.Offices.FindAsync(1);
+-
+-    [HttpPost("check-in")]
+-    public async Task<IActionResult> CheckIn(PunchRequest r)
+-    {
+-        var uid = UserId;
+-        var emp = await db.Employees.FindAsync(uid);
+-        if (emp == null || !emp.Active) return Fail("Vui lòng đăng nhập lại.", 401);
+-
+-        var existing = await db.Attendance.FirstOrDefaultAsync(a => a.EmployeeId == uid && a.IdempotencyKey == r.IdempotencyKey);
+-        if (existing != null) return Ok(ToDto(existing, emp.Name));
+-
+-        var now = DateTime.UtcNow;
+-        var office = await OfficeAsync() ?? new Office();
+-        var error = ValidatePunch(r, office, now);
+-        if (error != null) return Fail(error);
+-
+-        if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.CheckOut == null))
+-            return Fail("Bạn đang trong ca. Hãy chấm công ra trước.", 409);
+-        var shift = emp.ShiftId == null ? null : await db.Shifts.FindAsync(emp.ShiftId);
+-        if (shift == null) return Fail("Bạn chưa được phân ca. Liên hệ Admin.", 409);
+-
+-        var local = TimeVn.ToLocal(now);
+-        var overnight = shift.EndMinute < shift.StartMinute;
+-        var anchor = (overnight && local.Hour * 60 + local.Minute < shift.EndMinute ? local.AddDays(-1) : local).Date;
+-        var start = anchor.AddMinutes(shift.StartMinute);
+-        var end = anchor.AddMinutes(shift.EndMinute + (shift.EndMinute <= shift.StartMinute ? 1440 : 0));
+-        if (local >= end) return Fail("Ca đã kết thúc. Không thể chấm vào; hãy gửi đơn giải trình.", 409);
+-        var workDate = TimeVn.DayKey(end);
+-
+-        if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.WorkDate == workDate))
+-            return Fail("Bạn đã hoàn tất ca của ngày này.", 409);
+-        var day = DateOnly.FromDateTime(anchor);
+-        if (await db.WorkRequests.AnyAsync(w => w.EmployeeId == uid && w.Type == RequestTypes.Leave &&
+-                w.Status == RequestStatus.Approved && w.From <= day && w.To >= day))
+-            return Fail("Ngày này đã được duyệt nghỉ phép. Liên hệ Admin nếu lịch thay đổi.", 409);
+-
+-        var late = (int)Math.Max(0, Math.Floor((local - start).TotalMinutes) - shift.Grace);
+-        var a = new Attendance
+-        {
+-            EmployeeId = uid, ShiftName = shift.Name, WorkDate = workDate, CheckIn = now,
+-            ScheduledEnd = TimeVn.ToUtc(end), LateMinutes = late, Latitude = r.Latitude, Longitude = r.Longitude,
+-            Accuracy = r.Accuracy, IdempotencyKey = r.IdempotencyKey
+-        };
+-        var faceError = await face.Consume(uid, r.FaceProof, "check-in");
+-        if (faceError != null) return Fail(faceError, 403);
+-        db.Attendance.Add(a);
+-        try { await db.SaveChangesAsync(); }
+-        catch (DbUpdateException) { return Fail("Yêu cầu chấm công trùng lặp. Hãy tải lại trạng thái.", 409); }
+-        return Created($"/api/attendance/{a.Id}", ToDto(a, emp.Name));
+-    }
+-
+-    [HttpPost("check-out")]
+-    public async Task<IActionResult> CheckOut(PunchRequest r)
+-    {
+-        var uid = UserId;
+-        var emp = await db.Employees.FindAsync(uid);
+-        if (emp == null || !emp.Active) return Fail("Vui lòng đăng nhập lại.", 401);
+-
+-        var done = await db.Attendance.FirstOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOutIdempotencyKey == r.IdempotencyKey);
+-        if (done != null) return Ok(ToDto(done, emp.Name));
+-
+-        var now = DateTime.UtcNow;
+-        var office = await OfficeAsync() ?? new Office();
+-        var error = ValidatePunch(r, office, now);
+-        if (error != null) return Fail(error);
+-
+-        var open = await db.Attendance.FirstOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOut == null);
+-        if (open == null) return Fail("Bạn chưa chấm công vào.", 409);
+-        if (now < open.CheckIn) return Fail("Giờ thiết bị không hợp lệ.");
+-        var faceError = await face.Consume(uid, r.FaceProof, "check-out");
+-        if (faceError != null) return Fail(faceError, 403);
+-        open.CheckOut = now;
+-        open.OutLatitude = r.Latitude;
+-        open.OutLongitude = r.Longitude;
+-        open.CheckOutIdempotencyKey = r.IdempotencyKey;
+-        await db.SaveChangesAsync();
+-        return Ok(ToDto(open, emp.Name));
+-    }
+-
+-    [HttpGet]
+-    public async Task<IActionResult> List(DateOnly? from, DateOnly? to, Guid? employeeId, int page = 1, int pageSize = 50)
+-    {
+-        if (from != null && to != null && from > to) return Fail("Ngày kết thúc phải từ ngày bắt đầu trở đi.");
+-        page = Math.Max(1, page);
+-        pageSize = Math.Clamp(pageSize, 1, 100);
+-        var isStaff = User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Manager);
+-        var scope = isStaff ? employeeId : UserId;
+-
+-        var q = db.Attendance.AsQueryable();
+-        if (scope != null) q = q.Where(a => a.EmployeeId == scope);
+-        if (from != null) q = q.Where(a => a.CheckIn >= TimeVn.ToUtc(from.Value.ToDateTime(TimeOnly.MinValue)));
+-        if (to != null) q = q.Where(a => a.CheckIn < TimeVn.ToUtc(to.Value.AddDays(1).ToDateTime(TimeOnly.MinValue)));
+-
+-        var total = await q.CountAsync();
+-        var rows = await q.OrderByDescending(a => a.CheckIn).ThenByDescending(a => a.Id).Skip((page - 1) * pageSize).Take(pageSize)
+-            .Join(db.Employees, a => a.EmployeeId, e => e.Id, (a, e) => new { a, e.Name }).ToListAsync();
+-        return Ok(new PagedResult<AttendanceDto>(total, page, pageSize, rows.Select(x => ToDto(x.a, x.Name)).ToList()));
+-    }
+-}
+-
+-[ApiController, Route("api/requests"), Authorize]
+-public class RequestsController(AppDb db) : ApiBase
+-{
+-    private static WorkRequestDto ToDto(WorkRequest r, string? name) => new(r.Id, r.EmployeeId, name, r.Type,
+-        r.Reason, r.From, r.To, r.Status, r.ReviewerNote, r.CreatedAt, r.Version);
+-
+-    private static string? Check(RequestUpsert r) =>
+-        !RequestTypes.All.Contains(r.Type) || (r.Reason ?? "").Trim().Length < 10 || r.To < r.From
+-            ? "Loại đơn hợp lệ, lý do ít nhất 10 ký tự, ngày kết thúc không trước ngày bắt đầu."
+-            : null;
+-
+-    [HttpGet]
+-    public async Task<IActionResult> List(string? status)
+-    {
+-        var q = db.WorkRequests.AsQueryable();
+-        if (!User.IsInRole(Roles.Admin) && !User.IsInRole(Roles.Manager)) q = q.Where(r => r.EmployeeId == UserId);
+-        if (!string.IsNullOrEmpty(status)) q = q.Where(r => r.Status == status);
+-        var rows = await q.OrderByDescending(r => r.CreatedAt)
+-            .Join(db.Employees, r => r.EmployeeId, e => e.Id, (r, e) => new { r, e.Name }).ToListAsync();
+-        return Ok(rows.Select(x => ToDto(x.r, x.Name)));
+-    }
+-
+-    private Task<bool> OverlapsLeave(Guid uid, RequestUpsert r, Guid? ignore) =>
+-        r.Type != RequestTypes.Leave
+-            ? Task.FromResult(false)
+-            : db.WorkRequests.AnyAsync(e => e.Id != ignore && e.EmployeeId == uid && e.Type == r.Type &&
+-                                            e.Status != RequestStatus.Rejected && e.To >= r.From && e.From <= r.To);
+-
+-    [HttpPost]
+-    public async Task<IActionResult> Create(RequestUpsert r)
+-    {
+-        var err = Check(r);
+-        if (err != null) return Fail(err);
+-        var uid = UserId;
+-        if (await OverlapsLeave(uid, r, null)) return Fail("Khoảng ngày trùng với một đơn nghỉ phép hiện có.", 409);
+-        var w = new WorkRequest { EmployeeId = uid, Type = r.Type, Reason = r.Reason.Trim(), From = r.From, To = r.To };
+-        db.WorkRequests.Add(w);
+-        await db.SaveChangesAsync();
+-        return Created($"/api/requests/{w.Id}", ToDto(w, null));
+-    }
+-
+-    [HttpPatch("{id:guid}")]
+-    public async Task<IActionResult> Update(Guid id, RequestUpsert r)
+-    {
+-        var err = Check(r);
+-        if (err != null) return Fail(err);
+-        var w = await db.WorkRequests.FindAsync(id);
+-        if (w == null) return Fail("Không tìm thấy đơn.", 404);
+-        if (w.EmployeeId != UserId || w.Status != RequestStatus.Pending)
+-            return Fail("Chỉ được sửa đơn của mình đang chờ duyệt.", 403);
+-        if (await OverlapsLeave(w.EmployeeId, r, id)) return Fail("Khoảng ngày trùng với một đơn nghỉ phép hiện có.", 409);
+-        w.Type = r.Type; w.Reason = r.Reason.Trim(); w.From = r.From; w.To = r.To;
+-        try { await db.SaveChangesAsync(); }
+-        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa được xử lý. Hãy tải lại.", 409); }
+-        return Ok(ToDto(w, null));
+-    }
+-
+-    [HttpDelete("{id:guid}")]
+-    public async Task<IActionResult> Delete(Guid id)
+-    {
+-        var w = await db.WorkRequests.FindAsync(id);
+-        if (w == null) return Fail("Không tìm thấy đơn.", 404);
+-        if (w.EmployeeId != UserId || w.Status != RequestStatus.Pending)
+-            return Fail("Chỉ được xóa đơn của mình đang chờ duyệt.", 403);
+-        db.WorkRequests.Remove(w);
+-        try { await db.SaveChangesAsync(); }
+-        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa được xử lý. Hãy tải lại.", 409); }
+-        return NoContent();
+-    }
+-
+-    [HttpPost("{id:guid}/review"), Authorize(Roles = Roles.AdminOrManager)]
+-    public async Task<IActionResult> Review(Guid id, ReviewRequest r)
+-    {
+-        if (string.IsNullOrWhiteSpace(r.Note)) return Fail("Nhập nhận xét khi duyệt hoặc từ chối.");
+-        var w = await db.WorkRequests.FindAsync(id);
+-        if (w == null) return Fail("Không tìm thấy đơn.", 404);
+-        if (w.EmployeeId == UserId || w.Status != RequestStatus.Pending)
+-            return Fail("Không được duyệt đơn của mình hoặc đơn đã xử lý.", 409);
+-        if (r.Version != null) db.Entry(w).Property(x => x.Version).OriginalValue = r.Version.Value;
+-        w.Status = r.Approve ? RequestStatus.Approved : RequestStatus.Rejected;
+-        w.ReviewerNote = r.Note.Trim();
+-        w.ReviewedBy = UserId;
+-        try { await db.SaveChangesAsync(); }
+-        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa được thay đổi. Hãy tải lại.", 409); }
+-        return Ok(ToDto(w, null));
+-    }
+-}
+--- a/WebAPI_TongNhatBaoAn/Controllers/FaceLoginController.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/FaceLoginController.cs
+@@ -21,7 +21,7 @@
+         var username = (request.Username ?? "").Trim().ToLowerInvariant();
+         if (username.Length is < 3 or > 40) return Fail(denied, 401);
+         var employee = await db.Employees.FirstOrDefaultAsync(e => e.Username == username);
+-        if (employee == null || !employee.Active || !employee.EmailVerified) return Fail(denied, 401);
++        if (employee == null || !BusinessRules.CanUse(employee)) return Fail(denied, 401);
+         var profile = await db.FaceProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.EmployeeId == employee.Id);
+         if (profile == null || !profile.AllowLogin) return Fail(denied, 401);
+         try
+@@ -35,7 +35,7 @@
+ 
+         // Recheck account after a potentially long model request.
+         await db.Entry(employee).ReloadAsync();
+-        if (db.Entry(employee).State == EntityState.Detached || !employee.Active || !employee.EmailVerified)
++        if (db.Entry(employee).State == EntityState.Detached || !BusinessRules.CanUse(employee))
+             return Fail(denied, 401);
+         if (!await db.FaceProfiles.AnyAsync(p => p.EmployeeId == employee.Id && p.AllowLogin && p.UpdatedAt == profile.UpdatedAt))
+             return Fail(denied, 401);
+--- a/WebAPI_TongNhatBaoAn/Controllers/RequestsController.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/RequestsController.cs
+@@ -0,0 +1,106 @@
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Options;
++using WebAPI_TongNhatBaoAn.Data;
++using WebAPI_TongNhatBaoAn.Dtos;
++using WebAPI_TongNhatBaoAn.Models;
++using WebAPI_TongNhatBaoAn.Services;
++namespace WebAPI_TongNhatBaoAn.Controllers;
++
++[ApiController, Route("api/requests"), Authorize]
++public sealed class RequestsController(AppDb db, IOptions<LeaveOptions> leave, TimeProvider clock) : ApiBase
++{
++    private static WorkRequestDto Dto(WorkRequest w, string? name) => new(w.Id, w.EmployeeId, name, w.Type,
++        w.Reason, w.From, w.To, w.Status, w.ReviewerNote, w.CreatedAt, w.Version, w.Days, w.ReviewedBy, w.ReviewerName, w.ReviewedAt);
++    private int Validate(RequestUpsert r)
++    {
++        if (!RequestTypes.All.Contains(r.Type) || string.IsNullOrWhiteSpace(r.Reason) || r.Reason.Trim().Length < 10)
++            throw new BusinessException("Loại đơn không hợp lệ hoặc lý do ít hơn 10 ký tự.");
++        var count = BusinessRules.LeaveDays(r.From, r.To, leave.Value);
++        if (r.Type == RequestTypes.Leave && count == 0) throw new BusinessException("Khoảng nghỉ chỉ gồm ngày không tính phép.");
++        return r.Type == RequestTypes.Leave ? count : 0;
++    }
++    private async Task<List<WorkRequestDto>> Rows(IQueryable<WorkRequest> q, string? status)
++    {
++        if (status != null && status is not (RequestStatus.Pending or RequestStatus.Approved or RequestStatus.Rejected))
++            throw new BusinessException("Trạng thái đơn không hợp lệ.");
++        if (status != null) q = q.Where(w => w.Status == status);
++        var rows = await q.AsNoTracking().OrderByDescending(w => w.CreatedAt)
++            .Join(db.Employees, w => w.EmployeeId, e => e.Id, (w,e) => new { w, e.Name }).ToListAsync();
++        return rows.Select(x => Dto(x.w,x.Name)).ToList();
++    }
++    [HttpGet("mine")]
++    public async Task<IActionResult> Mine(string? status) => Ok(await Rows(db.WorkRequests.Where(w => w.EmployeeId == UserId), status));
++    [HttpGet("pending-review"), Authorize(Roles = Roles.AdminOrManager)]
++    public async Task<IActionResult> PendingReview()
++    {
++        var q = db.WorkRequests.Where(w => w.EmployeeId != UserId && w.Status == RequestStatus.Pending);
++        // Manager reviews only employee requests; requests from managers/admins need another admin.
++        if (!User.IsInRole(Roles.Admin)) q = q.Where(w => db.Employees.Any(e => e.Id == w.EmployeeId && e.Role == Roles.Employee));
++        return Ok(await Rows(q, null));
++    }
++    // Compatibility for existing callers. New integrations use the two explicit endpoints above.
++    [HttpGet]
++    public async Task<IActionResult> List(string? status) => await Mine(status);
++    [HttpPost]
++    public Task<IActionResult> Create(RequestUpsert r) => Save(null, r);
++    [HttpPatch("{id:guid}")]
++    public Task<IActionResult> Update(Guid id, RequestUpsert r) => Save(id, r);
++    private async Task<IActionResult> Save(Guid? id, RequestUpsert r)
++    {
++        var days = Validate(r);
++        try
++        {
++            var result = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
++            {
++                db.ChangeTracker.Clear();
++                await using var tx = await db.Database.BeginTransactionAsync();
++                // Serialize concurrent requests of this employee to protect overlap checks.
++                var owner = await db.Employees.FromSqlInterpolated($"SELECT *, xmin FROM \"Employees\" WHERE \"Id\"={UserId} FOR UPDATE").SingleAsync();
++                var w = id == null ? new WorkRequest { EmployeeId = UserId, CreatedAt = clock.GetUtcNow().UtcDateTime }
++                    : await db.WorkRequests.SingleOrDefaultAsync(w => w.Id == id) ?? throw new BusinessException("Không tìm thấy đơn.", 404);
++                if (w.EmployeeId != UserId || w.Status != RequestStatus.Pending) throw new BusinessException("Chỉ sửa đơn của mình đang chờ duyệt.", 403);
++                if (r.Type == RequestTypes.Leave && await db.WorkRequests.AnyAsync(x => x.Id != w.Id && x.EmployeeId == UserId &&
++                    x.Type == RequestTypes.Leave && x.Status != RequestStatus.Rejected && x.From <= r.To && x.To >= r.From))
++                    throw new BusinessException("Khoảng nghỉ trùng với đơn hiện có.", 409);
++                w.Type = r.Type; w.Reason = r.Reason.Trim(); w.From = r.From; w.To = r.To; w.Days = days;
++                if (id == null) db.WorkRequests.Add(w);
++                await db.SaveChangesAsync(); await tx.CommitAsync();
++                return Dto(w, owner.Name);
++            });
++            return id == null ? Created($"/api/requests/{result.Id}", result) : Ok(result);
++        }
++        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa được xử lý. Hãy tải lại.", 409); }
++    }
++    [HttpDelete("{id:guid}")]
++    public async Task<IActionResult> Delete(Guid id)
++    {
++        var w = await db.WorkRequests.FindAsync(id);
++        if (w == null) return Fail("Không tìm thấy đơn.",404);
++        if (w.EmployeeId != UserId || w.Status != RequestStatus.Pending) return Fail("Chỉ xóa đơn của mình đang chờ duyệt.",403);
++        db.WorkRequests.Remove(w);
++        try { await db.SaveChangesAsync(); }
++        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa được xử lý.",409); }
++        return NoContent();
++    }
++    [HttpPost("{id:guid}/review"), Authorize(Roles = Roles.AdminOrManager)]
++    public async Task<IActionResult> Review(Guid id, ReviewRequest r)
++    {
++        if (string.IsNullOrWhiteSpace(r.Note) || r.Version == null) return Fail("Cần nhận xét và version của đơn.");
++        var w = await db.WorkRequests.FindAsync(id);
++        if (w == null) return Fail("Không tìm thấy đơn.",404);
++        var owner = await db.Employees.FindAsync(w.EmployeeId);
++        var reviewer = await db.Employees.FindAsync(UserId);
++        if (owner == null || reviewer == null || !BusinessRules.CanReview(UserId, reviewer.Role, owner.Id, owner.Role))
++            return Fail("Không được tự duyệt. Đơn quản lý/admin phải do một Admin khác duyệt.",403);
++        if (w.Status != RequestStatus.Pending) return Fail("Đơn đã được xử lý.",409);
++        db.Entry(w).Property(x => x.Version).OriginalValue = r.Version.Value;
++        w.Status = r.Approve ? RequestStatus.Approved : RequestStatus.Rejected;
++        w.ReviewedBy = UserId; w.ReviewerName = reviewer.Name;
++        w.ReviewedAt = clock.GetUtcNow().UtcDateTime; w.ReviewerNote = r.Note.Trim();
++        try { await db.SaveChangesAsync(); }
++        catch (DbUpdateConcurrencyException) { return Fail("Đơn vừa thay đổi. Hãy tải lại.",409); }
++        return Ok(Dto(w,owner.Name));
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Controllers/StatisticsController.cs
++++ b/WebAPI_TongNhatBaoAn/Controllers/StatisticsController.cs
+@@ -0,0 +1,14 @@
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using WebAPI_TongNhatBaoAn.Models;
++using WebAPI_TongNhatBaoAn.Services;
++namespace WebAPI_TongNhatBaoAn.Controllers;
++
++[ApiController, Route("api/statistics"), Authorize]
++public sealed class StatisticsController(StatisticsService stats) : ApiBase
++{
++    [HttpGet("mine")]
++    public async Task<IActionResult> Mine(DateOnly from, DateOnly to) => Ok(await stats.Personal(UserId,from,to));
++    [HttpGet("company"), Authorize(Roles = Roles.AdminOrManager)]
++    public async Task<IActionResult> Company(DateOnly from, DateOnly to) => Ok(await stats.Company(from,to));
++}
+--- a/WebAPI_TongNhatBaoAn/Data/AppDb.cs
++++ b/WebAPI_TongNhatBaoAn/Data/AppDb.cs
+@@ -6,6 +6,7 @@
+ 
+ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
+ {
++    public DbSet<QrRedemption> QrRedemptions => Set<QrRedemption>();
+     public DbSet<Employee> Employees => Set<Employee>();
+     public DbSet<Shift> Shifts => Set<Shift>();
+     public DbSet<Department> Departments => Set<Department>();
+@@ -32,15 +33,24 @@
+         });
+         b.Entity<Employee>(e =>
+         {
++            e.Property(x => x.Version).IsRowVersion();
++            e.Property(x => x.ApprovalStatus).HasConversion<string>();
+             e.HasIndex(x => x.Username).IsUnique();
+             e.HasIndex(x => x.Email).IsUnique();
+             e.HasOne<Shift>().WithMany().HasForeignKey(x => x.ShiftId).OnDelete(DeleteBehavior.Restrict);
+         });
+ 
+-        b.Entity<Office>(e => e.Ignore(x => x.Configured));
++        b.Entity<Office>(e => { e.Ignore(x => x.Configured); e.Property(x => x.Radius).HasDefaultValue(100d); });
++        b.Entity<QrRedemption>(e => {
++            e.HasKey(x => new { x.EmployeeId, x.TokenHash });
++            e.Property(x => x.TokenHash).HasMaxLength(64);
++            e.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
++            e.HasIndex(x => x.RedeemedAt);
++        });
+ 
+         b.Entity<Attendance>(e =>
+         {
++            e.Property(x => x.Version).IsRowVersion();
+             e.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+             e.HasIndex(x => new { x.EmployeeId, x.WorkDate }).IsUnique();
+             e.HasIndex(x => new { x.EmployeeId, x.IdempotencyKey }).IsUnique();
+--- a/WebAPI_TongNhatBaoAn/Data/Migrations/20261022072020_AttendanceBusinessRules.Designer.cs
++++ b/WebAPI_TongNhatBaoAn/Data/Migrations/20261022072020_AttendanceBusinessRules.Designer.cs
+@@ -0,0 +1,556 @@
++// <auto-generated />
++using System;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
++using WebAPI_TongNhatBaoAn.Data;
++
++#nullable disable
++
++namespace WebAPI_TongNhatBaoAn.Data.Migrations
++{
++    [DbContext(typeof(AppDb))]
++    [Migration("20261022072020_AttendanceBusinessRules")]
++    partial class AttendanceBusinessRules
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasAnnotation("ProductVersion", "10.0.13")
++                .HasAnnotation("Relational:MaxIdentifierLength", 63);
++
++            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Attendance", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<double>("Accuracy")
++                        .HasColumnType("double precision");
++
++                    b.Property<DateTime>("AutoCloseAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<DateTime?>("AutoClosedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<int>("BreakMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<DateTime>("CheckIn")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<DateTime?>("CheckOut")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("CheckOutIdempotencyKey")
++                        .HasColumnType("text");
++
++                    b.Property<int>("EarlyLeaveGraceMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EarlyLeaveMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("ExpectedMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<string>("IdempotencyKey")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<bool>("IsAutoClosed")
++                        .HasColumnType("boolean");
++
++                    b.Property<int>("LateMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<double>("Latitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<double>("Longitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<int>("NetMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<double?>("OutLatitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<double?>("OutLongitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<DateTime>("ScheduledEnd")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<DateTime>("ScheduledStart")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("ShiftName")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<int>("Status")
++                        .HasColumnType("integer");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.Property<string>("WorkDate")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("CheckIn");
++
++                    b.HasIndex("EmployeeId")
++                        .IsUnique()
++                        .HasDatabaseName("UX_Attendance_OpenPerEmployee")
++                        .HasFilter("\"CheckOut\" IS NULL");
++
++                    b.HasIndex("EmployeeId", "IdempotencyKey")
++                        .IsUnique();
++
++                    b.HasIndex("EmployeeId", "WorkDate")
++                        .IsUnique();
++
++                    b.ToTable("Attendance");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Department", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Description")
++                        .HasColumnType("text");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Departments");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Employee", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("Active")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("ApprovalNote")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("ApprovalStatus")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime?>("ApprovedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<Guid?>("ApprovedBy")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Department")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<bool>("EmailVerified")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("PasswordHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Role")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<Guid?>("ShiftId")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("Username")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("ShiftId");
++
++                    b.HasIndex("Username")
++                        .IsUnique();
++
++                    b.ToTable("Employees");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("Consumed")
++                        .HasColumnType("boolean");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId", "ExpiresAt");
++
++                    b.ToTable("FaceGrants");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
++                {
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("AllowLogin")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("Template")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.HasKey("EmployeeId");
++
++                    b.ToTable("FaceProfiles");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Office", b =>
++                {
++                    b.Property<int>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("integer");
++
++                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
++
++                    b.Property<double?>("Latitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<double?>("Longitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("QrSecret")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<double>("Radius")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("double precision")
++                        .HasDefaultValue(100.0);
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Offices");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("Attempts")
++                        .HasColumnType("integer");
++
++                    b.Property<string>("CodeHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<bool>("Consumed")
++                        .HasColumnType("boolean");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId");
++
++                    b.ToTable("OtpChallenges");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.QrRedemption", b =>
++                {
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("TokenHash")
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)");
++
++                    b.Property<DateTime>("RedeemedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.HasKey("EmployeeId", "TokenHash");
++
++                    b.HasIndex("RedeemedAt");
++
++                    b.ToTable("QrRedemptions");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.RefreshToken", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<bool>("Revoked")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("TokenHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId");
++
++                    b.HasIndex("TokenHash")
++                        .IsUnique();
++
++                    b.ToTable("RefreshTokens");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Shift", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("BreakMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EarlyLeaveGraceMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EndMinute")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("Grace")
++                        .HasColumnType("integer");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<int>("StartMinute")
++                        .HasColumnType("integer");
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Shifts");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.WorkRequest", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<int>("Days")
++                        .HasColumnType("integer");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateOnly>("From")
++                        .HasColumnType("date");
++
++                    b.Property<string>("Reason")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime?>("ReviewedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<Guid?>("ReviewedBy")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("ReviewerName")
++                        .HasColumnType("text");
++
++                    b.Property<string>("ReviewerNote")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateOnly>("To")
++                        .HasColumnType("date");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId");
++
++                    b.ToTable("WorkRequests");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Attendance", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Employee", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Shift", null)
++                        .WithMany()
++                        .HasForeignKey("ShiftId")
++                        .OnDelete(DeleteBehavior.Restrict);
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.QrRedemption", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.RefreshToken", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.WorkRequest", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Data/Migrations/20261022072020_AttendanceBusinessRules.cs
++++ b/WebAPI_TongNhatBaoAn/Data/Migrations/20261022072020_AttendanceBusinessRules.cs
+@@ -0,0 +1,319 @@
++using System;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace WebAPI_TongNhatBaoAn.Data.Migrations
++{
++    /// <inheritdoc />
++    public partial class AttendanceBusinessRules : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.AddColumn<int>(
++                name: "Days",
++                table: "WorkRequests",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<DateTime>(
++                name: "ReviewedAt",
++                table: "WorkRequests",
++                type: "timestamp with time zone",
++                nullable: true);
++
++            migrationBuilder.AddColumn<string>(
++                name: "ReviewerName",
++                table: "WorkRequests",
++                type: "text",
++                nullable: true);
++
++            migrationBuilder.AddColumn<int>(
++                name: "BreakMinutes",
++                table: "Shifts",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<int>(
++                name: "EarlyLeaveGraceMinutes",
++                table: "Shifts",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AlterColumn<double>(
++                name: "Radius",
++                table: "Offices",
++                type: "double precision",
++                nullable: false,
++                defaultValue: 100.0,
++                oldClrType: typeof(double),
++                oldType: "double precision");
++
++            migrationBuilder.AddColumn<string>(
++                name: "ApprovalNote",
++                table: "Employees",
++                type: "text",
++                nullable: false,
++                defaultValue: "");
++
++            migrationBuilder.AddColumn<string>(
++                name: "ApprovalStatus",
++                table: "Employees",
++                type: "text",
++                nullable: false,
++                defaultValue: "");
++
++            migrationBuilder.AddColumn<DateTime>(
++                name: "ApprovedAt",
++                table: "Employees",
++                type: "timestamp with time zone",
++                nullable: true);
++
++            migrationBuilder.AddColumn<Guid>(
++                name: "ApprovedBy",
++                table: "Employees",
++                type: "uuid",
++                nullable: true);
++
++            migrationBuilder.AddColumn<uint>(
++                name: "xmin",
++                table: "Employees",
++                type: "xid",
++                rowVersion: true,
++                nullable: false,
++                defaultValue: 0u);
++
++            migrationBuilder.AddColumn<DateTime>(
++                name: "AutoCloseAt",
++                table: "Attendance",
++                type: "timestamp with time zone",
++                nullable: false,
++                defaultValue: new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified));
++
++            migrationBuilder.AddColumn<DateTime>(
++                name: "AutoClosedAt",
++                table: "Attendance",
++                type: "timestamp with time zone",
++                nullable: true);
++
++            migrationBuilder.AddColumn<int>(
++                name: "BreakMinutes",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<int>(
++                name: "EarlyLeaveGraceMinutes",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<int>(
++                name: "EarlyLeaveMinutes",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<int>(
++                name: "ExpectedMinutes",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<bool>(
++                name: "IsAutoClosed",
++                table: "Attendance",
++                type: "boolean",
++                nullable: false,
++                defaultValue: false);
++
++            migrationBuilder.AddColumn<int>(
++                name: "NetMinutes",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<DateTime>(
++                name: "ScheduledStart",
++                table: "Attendance",
++                type: "timestamp with time zone",
++                nullable: false,
++                defaultValue: new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified));
++
++            migrationBuilder.AddColumn<int>(
++                name: "Status",
++                table: "Attendance",
++                type: "integer",
++                nullable: false,
++                defaultValue: 0);
++
++            migrationBuilder.AddColumn<uint>(
++                name: "xmin",
++                table: "Attendance",
++                type: "xid",
++                rowVersion: true,
++                nullable: false,
++                defaultValue: 0u);
++
++            migrationBuilder.CreateTable(
++                name: "QrRedemptions",
++                columns: table => new
++                {
++                    EmployeeId = table.Column<Guid>(type: "uuid", nullable: false),
++                    TokenHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
++                    RedeemedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_QrRedemptions", x => new { x.EmployeeId, x.TokenHash });
++                    table.ForeignKey(
++                        name: "FK_QrRedemptions_Employees_EmployeeId",
++                        column: x => x.EmployeeId,
++                        principalTable: "Employees",
++                        principalColumn: "Id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_QrRedemptions_RedeemedAt",
++                table: "QrRedemptions",
++                column: "RedeemedAt");
++            migrationBuilder.Sql("""
++-- Existing accounts remain usable after migration. Public registration explicitly creates PendingApproval.
++UPDATE "Employees" SET "ApprovalStatus"='Approved' WHERE "ApprovalStatus"='';
++UPDATE "Shifts" SET "EarlyLeaveGraceMinutes"=5;
++
++-- Historical rows lack immutable shift snapshots. Preserve all original instants;
++-- quarantine for review rather than inventing a start time/break or counting unreliable hours.
++UPDATE "Attendance" SET
++    "ScheduledStart"="CheckIn",
++    "AutoCloseAt"=((("ScheduledEnd" AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
++    "Status"=8 | CASE WHEN "LateMinutes">0 THEN 1 ELSE 0 END,
++    "NetMinutes"=CASE WHEN "CheckOut" IS NULL THEN 0 ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM ("CheckOut"-"CheckIn"))/60)::integer) END;
++
++UPDATE "WorkRequests" w SET "ReviewerName"=e."Name"
++FROM "Employees" e WHERE w."ReviewedBy"=e."Id";
++-- ReviewedAt is deliberately NULL for legacy requests: the old system did not record it.
++-- Default policy at migration: exclude Saturday/Sunday. New requests use Leave__ExcludedDays.
++UPDATE "WorkRequests" w SET "Days"=(
++    SELECT COUNT(*) FROM generate_series(w."From"::timestamp,w."To"::timestamp,interval '1 day') AS d(day)
++    WHERE EXTRACT(ISODOW FROM d.day)<6
++) WHERE w."Type"='Nghỉ phép';
++
++UPDATE "Employees" SET "Name"='Tống Nhật Bảo An'
++WHERE "Role"='admin' AND "Name" IN ('Tổng Nhật Bảo An','Tổng Nhật Bảo An (Admin)');
++UPDATE "Offices" SET "Name"='Văn phòng chính' WHERE "Name"='Van phong chinh';
++
++""");
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropTable(
++                name: "QrRedemptions");
++
++            migrationBuilder.DropColumn(
++                name: "Days",
++                table: "WorkRequests");
++
++            migrationBuilder.DropColumn(
++                name: "ReviewedAt",
++                table: "WorkRequests");
++
++            migrationBuilder.DropColumn(
++                name: "ReviewerName",
++                table: "WorkRequests");
++
++            migrationBuilder.DropColumn(
++                name: "BreakMinutes",
++                table: "Shifts");
++
++            migrationBuilder.DropColumn(
++                name: "EarlyLeaveGraceMinutes",
++                table: "Shifts");
++
++            migrationBuilder.DropColumn(
++                name: "ApprovalNote",
++                table: "Employees");
++
++            migrationBuilder.DropColumn(
++                name: "ApprovalStatus",
++                table: "Employees");
++
++            migrationBuilder.DropColumn(
++                name: "ApprovedAt",
++                table: "Employees");
++
++            migrationBuilder.DropColumn(
++                name: "ApprovedBy",
++                table: "Employees");
++
++            migrationBuilder.DropColumn(
++                name: "xmin",
++                table: "Employees");
++
++            migrationBuilder.DropColumn(
++                name: "AutoCloseAt",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "AutoClosedAt",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "BreakMinutes",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "EarlyLeaveGraceMinutes",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "EarlyLeaveMinutes",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "ExpectedMinutes",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "IsAutoClosed",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "NetMinutes",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "ScheduledStart",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "Status",
++                table: "Attendance");
++
++            migrationBuilder.DropColumn(
++                name: "xmin",
++                table: "Attendance");
++
++            migrationBuilder.AlterColumn<double>(
++                name: "Radius",
++                table: "Offices",
++                type: "double precision",
++                nullable: false,
++                oldClrType: typeof(double),
++                oldType: "double precision",
++                oldDefaultValue: 100.0);
++        }
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Data/Migrations/AppDbModelSnapshot.cs
++++ b/WebAPI_TongNhatBaoAn/Data/Migrations/AppDbModelSnapshot.cs
+@@ -31,6 +31,15 @@
+                     b.Property<double>("Accuracy")
+                         .HasColumnType("double precision");
+ 
++                    b.Property<DateTime>("AutoCloseAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<DateTime?>("AutoClosedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<int>("BreakMinutes")
++                        .HasColumnType("integer");
++
+                     b.Property<DateTime>("CheckIn")
+                         .HasColumnType("timestamp with time zone");
+ 
+@@ -40,13 +49,25 @@
+                     b.Property<string>("CheckOutIdempotencyKey")
+                         .HasColumnType("text");
+ 
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
++                    b.Property<int>("EarlyLeaveGraceMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EarlyLeaveMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("ExpectedMinutes")
++                        .HasColumnType("integer");
+ 
+                     b.Property<string>("IdempotencyKey")
+                         .IsRequired()
+                         .HasColumnType("text");
+ 
++                    b.Property<bool>("IsAutoClosed")
++                        .HasColumnType("boolean");
++
+                     b.Property<int>("LateMinutes")
+                         .HasColumnType("integer");
+ 
+@@ -56,6 +77,9 @@
+                     b.Property<double>("Longitude")
+                         .HasColumnType("double precision");
+ 
++                    b.Property<int>("NetMinutes")
++                        .HasColumnType("integer");
++
+                     b.Property<double?>("OutLatitude")
+                         .HasColumnType("double precision");
+ 
+@@ -65,209 +89,15 @@
+                     b.Property<DateTime>("ScheduledEnd")
+                         .HasColumnType("timestamp with time zone");
+ 
++                    b.Property<DateTime>("ScheduledStart")
++                        .HasColumnType("timestamp with time zone");
++
+                     b.Property<string>("ShiftName")
+                         .IsRequired()
+                         .HasColumnType("text");
+ 
+-                    b.Property<string>("WorkDate")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.HasKey("Id");
+-
+-                    b.HasIndex("CheckIn");
+-
+-                    b.HasIndex("EmployeeId")
+-                        .IsUnique()
+-                        .HasDatabaseName("UX_Attendance_OpenPerEmployee")
+-                        .HasFilter("\"CheckOut\" IS NULL");
+-
+-                    b.HasIndex("EmployeeId", "IdempotencyKey")
+-                        .IsUnique();
+-
+-                    b.HasIndex("EmployeeId", "WorkDate")
+-                        .IsUnique();
+-
+-                    b.ToTable("Attendance");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Department", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<DateTime>("CreatedAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.Property<string>("Description")
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("Name")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.HasKey("Id");
+-
+-                    b.ToTable("Departments");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Employee", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<bool>("Active")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<DateTime>("CreatedAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.Property<string>("Department")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("Email")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<bool>("EmailVerified")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<string>("Name")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("PasswordHash")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("Role")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<Guid?>("ShiftId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<string>("Username")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.HasKey("Id");
+-
+-                    b.HasIndex("Email")
+-                        .IsUnique();
+-
+-                    b.HasIndex("ShiftId");
+-
+-                    b.HasIndex("Username")
+-                        .IsUnique();
+-
+-                    b.ToTable("Employees");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<bool>("Consumed")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<DateTime>("ExpiresAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.Property<string>("Purpose")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.HasKey("Id");
+-
+-                    b.HasIndex("EmployeeId", "ExpiresAt");
+-
+-                    b.ToTable("FaceGrants");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
+-                {
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<bool>("AllowLogin")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<string>("Template")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<DateTime>("UpdatedAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.HasKey("EmployeeId");
+-
+-                    b.ToTable("FaceProfiles");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Office", b =>
+-                {
+-                    b.Property<int>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("integer");
+-
+-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+-
+-                    b.Property<double?>("Latitude")
+-                        .HasColumnType("double precision");
+-
+-                    b.Property<double?>("Longitude")
+-                        .HasColumnType("double precision");
+-
+-                    b.Property<string>("Name")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("QrSecret")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<double>("Radius")
+-                        .HasColumnType("double precision");
+-
+-                    b.HasKey("Id");
+-
+-                    b.ToTable("Offices");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<int>("Attempts")
+-                        .HasColumnType("integer");
+-
+-                    b.Property<string>("CodeHash")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<bool>("Consumed")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<DateTime>("ExpiresAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.Property<string>("Purpose")
+-                        .IsRequired()
+-                        .HasColumnType("text");
++                    b.Property<int>("Status")
++                        .HasColumnType("integer");
+ 
+                     b.Property<uint>("Version")
+                         .IsConcurrencyToken()
+@@ -275,100 +105,102 @@
+                         .HasColumnType("xid")
+                         .HasColumnName("xmin");
+ 
+-                    b.HasKey("Id");
+-
+-                    b.HasIndex("EmployeeId");
+-
+-                    b.ToTable("OtpChallenges");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.RefreshToken", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<DateTime>("ExpiresAt")
+-                        .HasColumnType("timestamp with time zone");
+-
+-                    b.Property<bool>("Revoked")
+-                        .HasColumnType("boolean");
+-
+-                    b.Property<string>("TokenHash")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.HasKey("Id");
+-
+-                    b.HasIndex("EmployeeId");
+-
+-                    b.HasIndex("TokenHash")
++                    b.Property<string>("WorkDate")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("CheckIn");
++
++                    b.HasIndex("EmployeeId")
++                        .IsUnique()
++                        .HasDatabaseName("UX_Attendance_OpenPerEmployee")
++                        .HasFilter("\"CheckOut\" IS NULL");
++
++                    b.HasIndex("EmployeeId", "IdempotencyKey")
+                         .IsUnique();
+ 
+-                    b.ToTable("RefreshTokens");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Shift", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<int>("EndMinute")
+-                        .HasColumnType("integer");
+-
+-                    b.Property<int>("Grace")
+-                        .HasColumnType("integer");
++                    b.HasIndex("EmployeeId", "WorkDate")
++                        .IsUnique();
++
++                    b.ToTable("Attendance");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Department", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Description")
++                        .HasColumnType("text");
+ 
+                     b.Property<string>("Name")
+                         .IsRequired()
+                         .HasColumnType("text");
+ 
+-                    b.Property<int>("StartMinute")
+-                        .HasColumnType("integer");
+-
+-                    b.HasKey("Id");
+-
+-                    b.ToTable("Shifts");
+-                });
+-
+-            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.WorkRequest", b =>
+-                {
+-                    b.Property<Guid>("Id")
+-                        .ValueGeneratedOnAdd()
++                    b.HasKey("Id");
++
++                    b.ToTable("Departments");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Employee", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("Active")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("ApprovalNote")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("ApprovalStatus")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime?>("ApprovedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<Guid?>("ApprovedBy")
+                         .HasColumnType("uuid");
+ 
+                     b.Property<DateTime>("CreatedAt")
+                         .HasColumnType("timestamp with time zone");
+ 
+-                    b.Property<Guid>("EmployeeId")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<DateOnly>("From")
+-                        .HasColumnType("date");
+-
+-                    b.Property<string>("Reason")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<Guid?>("ReviewedBy")
+-                        .HasColumnType("uuid");
+-
+-                    b.Property<string>("ReviewerNote")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<string>("Status")
+-                        .IsRequired()
+-                        .HasColumnType("text");
+-
+-                    b.Property<DateOnly>("To")
+-                        .HasColumnType("date");
+-
+-                    b.Property<string>("Type")
++                    b.Property<string>("Department")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<bool>("EmailVerified")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("PasswordHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Role")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<Guid?>("ShiftId")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("Username")
+                         .IsRequired()
+                         .HasColumnType("text");
+ 
+@@ -380,6 +212,266 @@
+ 
+                     b.HasKey("Id");
+ 
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("ShiftId");
++
++                    b.HasIndex("Username")
++                        .IsUnique();
++
++                    b.ToTable("Employees");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("Consumed")
++                        .HasColumnType("boolean");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId", "ExpiresAt");
++
++                    b.ToTable("FaceGrants");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
++                {
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<bool>("AllowLogin")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("Template")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.HasKey("EmployeeId");
++
++                    b.ToTable("FaceProfiles");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Office", b =>
++                {
++                    b.Property<int>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("integer");
++
++                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
++
++                    b.Property<double?>("Latitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<double?>("Longitude")
++                        .HasColumnType("double precision");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("QrSecret")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<double>("Radius")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("double precision")
++                        .HasDefaultValue(100.0);
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Offices");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("Attempts")
++                        .HasColumnType("integer");
++
++                    b.Property<string>("CodeHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<bool>("Consumed")
++                        .HasColumnType("boolean");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId");
++
++                    b.ToTable("OtpChallenges");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.QrRedemption", b =>
++                {
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("TokenHash")
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)");
++
++                    b.Property<DateTime>("RedeemedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.HasKey("EmployeeId", "TokenHash");
++
++                    b.HasIndex("RedeemedAt");
++
++                    b.ToTable("QrRedemptions");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.RefreshToken", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<bool>("Revoked")
++                        .HasColumnType("boolean");
++
++                    b.Property<string>("TokenHash")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("EmployeeId");
++
++                    b.HasIndex("TokenHash")
++                        .IsUnique();
++
++                    b.ToTable("RefreshTokens");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Shift", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<int>("BreakMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EarlyLeaveGraceMinutes")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("EndMinute")
++                        .HasColumnType("integer");
++
++                    b.Property<int>("Grace")
++                        .HasColumnType("integer");
++
++                    b.Property<string>("Name")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<int>("StartMinute")
++                        .HasColumnType("integer");
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Shifts");
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.WorkRequest", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<int>("Days")
++                        .HasColumnType("integer");
++
++                    b.Property<Guid>("EmployeeId")
++                        .HasColumnType("uuid");
++
++                    b.Property<DateOnly>("From")
++                        .HasColumnType("date");
++
++                    b.Property<string>("Reason")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateTime?>("ReviewedAt")
++                        .HasColumnType("timestamp with time zone");
++
++                    b.Property<Guid?>("ReviewedBy")
++                        .HasColumnType("uuid");
++
++                    b.Property<string>("ReviewerName")
++                        .HasColumnType("text");
++
++                    b.Property<string>("ReviewerNote")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<DateOnly>("To")
++                        .HasColumnType("date");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasColumnType("text");
++
++                    b.Property<uint>("Version")
++                        .IsConcurrencyToken()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("xid")
++                        .HasColumnName("xmin");
++
++                    b.HasKey("Id");
++
+                     b.HasIndex("EmployeeId");
+ 
+                     b.ToTable("WorkRequests");
+@@ -421,6 +513,15 @@
+                 });
+ 
+             modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>
++                {
++                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
++                        .WithMany()
++                        .HasForeignKey("EmployeeId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++                });
++
++            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.QrRedemption", b =>
+                 {
+                     b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
+                         .WithMany()
+--- a/WebAPI_TongNhatBaoAn/Dtos/Dtos.cs
++++ b/WebAPI_TongNhatBaoAn/Dtos/Dtos.cs
+@@ -9,10 +9,10 @@
+ public record ChallengeResponse(Guid ChallengeId, string? DebugCode = null);
+ 
+ public record EmployeeDto(Guid Id, string Name, string Email, string Username, string Department,
+-    string Role, Guid? ShiftId, bool Active)
++    string Role, Guid? ShiftId, bool Active, ApprovalStatus ApprovalStatus)
+ {
+     public static EmployeeDto From(Employee e) =>
+-        new(e.Id, e.Name, e.Email, e.Username, e.Department, e.Role, e.ShiftId, e.Active);
++        new(e.Id, e.Name, e.Email, e.Username, e.Department, e.Role, e.ShiftId, e.Active, e.ApprovalStatus);
+ }
+ 
+ public record TokenResponse(string AccessToken, DateTime AccessExpiresAt, string RefreshToken, EmployeeDto User);
+@@ -23,11 +23,11 @@
+     string? Department, string? Role, bool? Active);
+ public record AssignShift(Guid? ShiftId);
+ 
+-public record ShiftDto(Guid Id, string Name, int StartMinute, int EndMinute, int Grace)
++public record ShiftDto(Guid Id, string Name, int StartMinute, int EndMinute, int Grace, int BreakMinutes, int EarlyLeaveGraceMinutes)
+ {
+-    public static ShiftDto From(Shift s) => new(s.Id, s.Name, s.StartMinute, s.EndMinute, s.Grace);
++    public static ShiftDto From(Shift s) => new(s.Id, s.Name, s.StartMinute, s.EndMinute, s.Grace, s.BreakMinutes, s.EarlyLeaveGraceMinutes);
+ }
+-public record ShiftUpsert(string Name, int StartMinute, int EndMinute, int Grace);
++public record ShiftUpsert(string Name, int StartMinute, int EndMinute, int Grace, int? BreakMinutes = null, int? EarlyLeaveGraceMinutes = null);
+ 
+ public record DepartmentDto(Guid Id, string Name, string? Description)
+ {
+@@ -47,10 +47,12 @@
+ 
+ public record AttendanceDto(Guid Id, Guid EmployeeId, string? EmployeeName, string ShiftName, string WorkDate,
+     DateTime CheckIn, DateTime ScheduledEnd, int LateMinutes, double Latitude, double Longitude,
+-    double Accuracy, DateTime? CheckOut, double? OutLatitude, double? OutLongitude);
++    double Accuracy, DateTime? CheckOut, double? OutLatitude, double? OutLongitude,
++    DateTime ScheduledStart, int BreakMinutes, int ExpectedMinutes, int EarlyLeaveGraceMinutes,
++    int EarlyLeaveMinutes, int NetMinutes, bool IsAutoClosed, DateTime? AutoClosedAt, AttendanceStatus Status);
+ public record PagedResult<T>(int Total, int Page, int PageSize, List<T> Items);
+ 
+ public record RequestUpsert(string Type, string Reason, DateOnly From, DateOnly To);
+ public record ReviewRequest(bool Approve, string Note, uint? Version);
+ public record WorkRequestDto(Guid Id, Guid EmployeeId, string? EmployeeName, string Type, string Reason,
+-    DateOnly From, DateOnly To, string Status, string ReviewerNote, DateTime CreatedAt, uint Version);
++    DateOnly From, DateOnly To, string Status, string ReviewerNote, DateTime CreatedAt, uint Version, int Days, Guid? ReviewedBy, string? ReviewerName, DateTime? ReviewedAt);
+--- a/WebAPI_TongNhatBaoAn/Models/BusinessEntities.cs
++++ b/WebAPI_TongNhatBaoAn/Models/BusinessEntities.cs
+@@ -0,0 +1,12 @@
++namespace WebAPI_TongNhatBaoAn.Models;
++
++public enum ApprovalStatus { PendingApproval, Approved, Rejected }
++// Flags: a shift can be both late and leave early. Zero means on time.
++[Flags]
++public enum AttendanceStatus { DungGio = 0, DiTre = 1, VeSom = 2, QuenCheckOut = 4, BatThuong = 8 }
++public class QrRedemption
++{
++    public Guid EmployeeId { get; set; }
++    public string TokenHash { get; set; } = "";
++    public DateTime RedeemedAt { get; set; }
++}
+--- a/WebAPI_TongNhatBaoAn/Models/Entities.cs
++++ b/WebAPI_TongNhatBaoAn/Models/Entities.cs
+@@ -12,6 +12,11 @@
+     public Guid? ShiftId { get; set; }
+     public bool Active { get; set; } = true;
+     public bool EmailVerified { get; set; }
++    public ApprovalStatus ApprovalStatus { get; set; } = ApprovalStatus.PendingApproval;
++    public Guid? ApprovedBy { get; set; }
++    public DateTime? ApprovedAt { get; set; }
++    public string ApprovalNote { get; set; } = "";
++    public uint Version { get; set; }
+     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+ }
+ 
+@@ -31,6 +36,8 @@
+     public int StartMinute { get; set; }
+     public int EndMinute { get; set; }
+     public int Grace { get; set; } = 5;
++    public int BreakMinutes { get; set; }
++    public int EarlyLeaveGraceMinutes { get; set; } = 5;
+ }
+ 
+ public class Department
+@@ -44,10 +51,10 @@
+ public class Office
+ {
+     public int Id { get; set; } = 1;
+-    public string Name { get; set; } = "Văn phòng";
++    public string Name { get; set; } = "Văn phòng chính";
+     public double? Latitude { get; set; }
+     public double? Longitude { get; set; }
+-    public double Radius { get; set; } = 150;
++    public double Radius { get; set; } = 100;
+     public string QrSecret { get; set; } = "";
+     public bool Configured => Latitude != null && Longitude != null && QrSecret.Length > 0;
+ }
+@@ -60,6 +67,17 @@
+     public string WorkDate { get; set; } = "";
+     public DateTime CheckIn { get; set; }
+     public DateTime ScheduledEnd { get; set; }
++    public DateTime ScheduledStart { get; set; }
++    public DateTime AutoCloseAt { get; set; }
++    public int BreakMinutes { get; set; }
++    public int EarlyLeaveGraceMinutes { get; set; }
++    public int ExpectedMinutes { get; set; }
++    public int EarlyLeaveMinutes { get; set; }
++    public int NetMinutes { get; set; }
++    public bool IsAutoClosed { get; set; }
++    public DateTime? AutoClosedAt { get; set; }
++    public AttendanceStatus Status { get; set; }
++    public uint Version { get; set; }
+     public int LateMinutes { get; set; }
+     public double Latitude { get; set; }
+     public double Longitude { get; set; }
+@@ -82,6 +100,9 @@
+     public string Status { get; set; } = RequestStatus.Pending;
+     public string ReviewerNote { get; set; } = "";
+     public Guid? ReviewedBy { get; set; }
++    public DateTime? ReviewedAt { get; set; }
++    public string? ReviewerName { get; set; }
++    public int Days { get; set; }
+     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+     public uint Version { get; set; }
+ }
+--- a/WebAPI_TongNhatBaoAn/Program.cs
++++ b/WebAPI_TongNhatBaoAn/Program.cs
+@@ -18,11 +18,22 @@
+     builder.Configuration.GetConnectionString("Default")
+     ?? throw new InvalidOperationException("Thiếu biến môi trường ConnectionStrings__Default."));
+ var jwtKey = builder.Configuration["Jwt:Key"];
++connectionString = new Npgsql.NpgsqlConnectionStringBuilder(connectionString) { Timezone = "UTC" }.ConnectionString;
+ if (string.IsNullOrEmpty(jwtKey) || jwtKey.Length < 32)
+     throw new InvalidOperationException("Jwt__Key phải có ít nhất 32 ký tự.");
+ 
+ builder.Services.AddDbContext<AppDb>(o => o.UseNpgsql(connectionString,
+     npgsql => npgsql.EnableRetryOnFailure(maxRetryCount: 4, maxRetryDelay: TimeSpan.FromSeconds(3), errorCodesToAdd: null)));
++builder.Services.AddSingleton(TimeProvider.System);
++builder.Services.AddOptions<AttendanceOptions>().BindConfiguration("Attendance")
++    .Validate(o => o.MaxEarlyCheckInMinutes is >= 0 and <= 240 && o.MinSessionMinutes is >= 1 and <= 1440 &&
++        o.MaxAccuracyMeters is > 0 and <= 50 && o.QrLifetimeSeconds is >= 30 and <= 60, "Invalid Attendance configuration").ValidateOnStart();
++builder.Services.AddOptions<LeaveOptions>().BindConfiguration("Leave")
++    .Validate(o => o.ExcludedDays != null && o.ExcludedDays.All(d => Enum.IsDefined(d)) && o.ExcludedDays.Distinct().Count() < 7,
++        "Leave must have at least one working weekday").ValidateOnStart();
++builder.Services.AddScoped<AttendanceService>();
++builder.Services.AddScoped<StatisticsService>();
++builder.Services.AddHostedService<AttendanceClosingWorker>();
+ builder.Services.AddScoped<TokenService>();
+ builder.Services.AddScoped<OtpService>();
+ builder.Services.AddHttpClient<OtpEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(15));
+@@ -42,7 +53,7 @@
+             if (!Guid.TryParse(raw, out var uid)) { context.Fail("Invalid user."); return; }
+             var db = context.HttpContext.RequestServices.GetRequiredService<AppDb>();
+             var employee = await db.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == uid);
+-            if (employee == null || !employee.Active || !employee.EmailVerified ||
++            if (employee == null || !employee.Active || !employee.EmailVerified || employee.ApprovalStatus != ApprovalStatus.Approved ||
+                 employee.Role != context.Principal?.FindFirst("role")?.Value)
+                 context.Fail("Account access changed. Sign in again.");
+         }
+@@ -78,7 +89,10 @@
+     o.KnownProxies.Clear();
+ });
+ 
+-builder.Services.AddControllers();
++builder.Services.AddControllers().AddJsonOptions(o => {
++    o.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter());
++    o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
++});
+ builder.Services.AddEndpointsApiExplorer();
+ builder.Services.AddSwaggerGen();
+ 
+@@ -99,6 +113,13 @@
+     await SeedAsync(db, app.Configuration);
+ }
+ 
++app.Use(async (context, next) => {
++    try { await next(context); }
++    catch (BusinessException ex) when (!context.Response.HasStarted) {
++        context.Response.StatusCode = ex.Status;
++        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
++    }
++});
+ app.UseForwardedHeaders();
+ app.UseSwagger();
+ app.UseSwaggerUI();
+@@ -169,7 +190,7 @@
+         db.Employees.Add(new Employee
+         {
+             Name = cfg["Seed:AdminName"] ?? "Quản trị viên", Username = username, Email = email,
+-            Role = Roles.Admin, EmailVerified = true, PasswordHash = BCrypt.Net.BCrypt.HashPassword(password)
++            Role = Roles.Admin, EmailVerified = true, ApprovalStatus = ApprovalStatus.Approved, PasswordHash = BCrypt.Net.BCrypt.HashPassword(password)
+         });
+     }
+     else if (existingAdmin != null && !string.IsNullOrEmpty(email) && existingAdmin.Email != email)
+--- a/WebAPI_TongNhatBaoAn/Services/AttendanceService.cs
++++ b/WebAPI_TongNhatBaoAn/Services/AttendanceService.cs
+@@ -0,0 +1,135 @@
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Options;
++using WebAPI_TongNhatBaoAn.Data;
++using WebAPI_TongNhatBaoAn.Dtos;
++using WebAPI_TongNhatBaoAn.Models;
++namespace WebAPI_TongNhatBaoAn.Services;
++
++public sealed class AttendanceService(AppDb db, QrService qr, FaceAttendancePolicy face,
++    IOptions<AttendanceOptions> options, IOptions<LeaveOptions> leaveOptions, TimeProvider clock)
++{
++    public async Task CloseOverdueAsync(CancellationToken ct = default)
++    {
++        var now = clock.GetUtcNow().UtcDateTime;
++        // Atomic predicate also prevents a racing checkout from being overwritten.
++        await db.Attendance.Where(a => a.CheckOut == null && a.AutoCloseAt <= now)
++            .ExecuteUpdateAsync(s => s.SetProperty(a => a.CheckOut, a => (DateTime?)a.ScheduledEnd)
++                .SetProperty(a => a.IsAutoClosed, true).SetProperty(a => a.AutoClosedAt, now)
++                .SetProperty(a => a.NetMinutes, 0)
++                .SetProperty(a => a.Status, a => a.Status | AttendanceStatus.QuenCheckOut), ct);
++    }
++
++    private void Validate(PunchRequest r, Office office, DateTime now)
++    {
++        if (!office.Configured) throw new BusinessException("Admin chưa cấu hình văn phòng.", 409);
++        if (string.IsNullOrWhiteSpace(r.IdempotencyKey) || r.IdempotencyKey.Length > 100)
++            throw new BusinessException("Thiếu mã yêu cầu hoặc mã quá dài.");
++        if (!qr.IsValid(office.QrSecret, r.Qr, now)) throw new BusinessException("QR sai hoặc hết hạn. Hãy quét mã mới.");
++        BusinessRules.ValidateLocation(r,office,now,options.Value.MaxAccuracyMeters);
++    }
++
++    public async Task<AttendanceDto> PunchAsync(Guid uid, PunchRequest r, bool checkIn)
++    {
++        // Catch-up also runs when a sleeping Render instance wakes up.
++        await CloseOverdueAsync();
++        try
++        {
++            return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
++            {
++                db.ChangeTracker.Clear();
++                await using var tx = await db.Database.BeginTransactionAsync();
++                var employee = await db.Employees.SingleOrDefaultAsync(e => e.Id == uid);
++                if (employee == null || !BusinessRules.CanUse(employee)) throw new BusinessException("Tài khoản chưa được duyệt hoặc bị khóa.", 403);
++                var existing = checkIn
++                    ? await db.Attendance.SingleOrDefaultAsync(a => a.EmployeeId == uid && a.IdempotencyKey == r.IdempotencyKey)
++                    : await db.Attendance.SingleOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOutIdempotencyKey == r.IdempotencyKey);
++                // Network retry is not another redemption. Return exactly the successful operation.
++                if (existing != null) { await tx.CommitAsync(); return BusinessRules.Dto(existing, employee.Name); }
++                var now = clock.GetUtcNow().UtcDateTime;
++                var office = await db.Offices.FindAsync(1) ?? new Office();
++                Validate(r, office, now);
++                var hash = TokenService.Hash(r.Qr);
++                if (await db.QrRedemptions.AnyAsync(q => q.EmployeeId == uid && q.TokenHash == hash))
++                    throw new BusinessException("Bạn đã dùng QR này. Hãy quét QR mới.", 409);
++                Attendance row;
++                if (checkIn)
++                {
++                    if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.CheckOut == null))
++                        throw new BusinessException("Bạn còn ca chưa chấm công ra.", 409);
++                    var shift = employee.ShiftId == null ? null : await db.Shifts.FindAsync(employee.ShiftId);
++                    if (shift == null) throw new BusinessException("Bạn chưa được phân ca.", 409);
++                    var window = BusinessRules.Window(shift, now, options.Value.MaxEarlyCheckInMinutes);
++                    // Keep the existing database convention: WorkDate is the VN date when the shift ends.
++                    var workDate = TimeVn.DayKey(TimeVn.ToLocal(window.End));
++                    if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.WorkDate == workDate))
++                        throw new BusinessException("Đã có bản ghi của ca ngày này.", 409);
++                    var day = DateOnly.FromDateTime(TimeVn.ToLocal(window.Start));
++                    if (!leaveOptions.Value.ExcludedDays.Contains(day.DayOfWeek) &&
++                        await db.WorkRequests.AnyAsync(w => w.EmployeeId == uid && w.Type == RequestTypes.Leave &&
++                        w.Status == RequestStatus.Approved && w.From <= day && w.To >= day))
++                        throw new BusinessException("Ngày bắt đầu ca đã được duyệt nghỉ phép.", 409);
++                    var late = BusinessRules.Late(now, window.Start, shift.Grace);
++                    row = new Attendance {
++                        EmployeeId = uid, ShiftName = shift.Name, WorkDate = workDate, CheckIn = now,
++                        ScheduledStart = window.Start, ScheduledEnd = window.End, AutoCloseAt = window.AutoClose,
++                        BreakMinutes = shift.BreakMinutes, EarlyLeaveGraceMinutes = shift.EarlyLeaveGraceMinutes,
++                        ExpectedMinutes = BusinessRules.NetMinutes(window.Start, window.End, shift.BreakMinutes),
++                        LateMinutes = late, Status = late > 0 ? AttendanceStatus.DiTre : AttendanceStatus.DungGio,
++                        Latitude = r.Latitude, Longitude = r.Longitude, Accuracy = r.Accuracy, IdempotencyKey = r.IdempotencyKey
++                    };
++                    db.Attendance.Add(row);
++                }
++                else
++                {
++                    row = await db.Attendance.SingleOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOut == null)
++                        ?? throw new BusinessException("Bạn chưa chấm công vào hoặc ca đã tự đóng.", 409);
++                    BusinessRules.EnsureCheckoutAllowed(row,now,options.Value.MinSessionMinutes);
++                    row.CheckOut = now;
++                    row.OutLatitude = r.Latitude; row.OutLongitude = r.Longitude;
++                    row.CheckOutIdempotencyKey = r.IdempotencyKey;
++                    row.EarlyLeaveMinutes = BusinessRules.Early(now, row.ScheduledEnd, row.EarlyLeaveGraceMinutes);
++                    row.NetMinutes = BusinessRules.NetMinutes(row.CheckIn, now, row.BreakMinutes);
++                    if (row.EarlyLeaveMinutes > 0) row.Status |= AttendanceStatus.VeSom;
++                }
++                var faceError = await face.Consume(uid, r.FaceProof, checkIn ? "check-in" : "check-out");
++                if (faceError != null) throw new BusinessException(faceError, 403);
++                db.QrRedemptions.Add(new QrRedemption { EmployeeId = uid, TokenHash = hash, RedeemedAt = now });
++                await db.SaveChangesAsync();
++                await tx.CommitAsync();
++                return BusinessRules.Dto(row, employee.Name);
++            });
++        }
++        catch (DbUpdateConcurrencyException) { throw new BusinessException("Ca vừa được xử lý. Hãy tải lại.", 409); }
++        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
++        {
++            db.ChangeTracker.Clear();
++            var done = checkIn
++                ? await db.Attendance.AsNoTracking().SingleOrDefaultAsync(a => a.EmployeeId == uid && a.IdempotencyKey == r.IdempotencyKey)
++                : await db.Attendance.AsNoTracking().SingleOrDefaultAsync(a => a.EmployeeId == uid && a.CheckOutIdempotencyKey == r.IdempotencyKey);
++            if (done != null) return BusinessRules.Dto(done, await db.Employees.Where(e => e.Id == uid).Select(e => e.Name).SingleAsync());
++            throw new BusinessException("Yêu cầu trùng lặp hoặc QR đã dùng. Hãy tải lại.", 409);
++        }
++    }
++}
++
++public sealed class AttendanceClosingWorker(IServiceScopeFactory scopes, ILogger<AttendanceClosingWorker> logger) : BackgroundService
++{
++    protected override async Task ExecuteAsync(CancellationToken ct)
++    {
++        while (!ct.IsCancellationRequested)
++        {
++            try
++            {
++                await using var scope = scopes.CreateAsyncScope();
++                var db = scope.ServiceProvider.GetRequiredService<AppDb>();
++                await scope.ServiceProvider.GetRequiredService<AttendanceService>().CloseOverdueAsync(ct);
++                var cutoff = DateTime.UtcNow.AddDays(-2);
++                await db.QrRedemptions.Where(q => q.RedeemedAt < cutoff).ExecuteDeleteAsync(ct);
++            }
++            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
++            catch (Exception ex) { logger.LogError(ex, "Auto-close attendance failed; will retry."); }
++            try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
++            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
++        }
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Services/BusinessRules.cs
++++ b/WebAPI_TongNhatBaoAn/Services/BusinessRules.cs
+@@ -0,0 +1,119 @@
++using System.Globalization;
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++using System.Text.Json.Serialization;
++using WebAPI_TongNhatBaoAn.Dtos;
++using WebAPI_TongNhatBaoAn.Models;
++
++namespace WebAPI_TongNhatBaoAn.Services;
++
++public sealed class AttendanceOptions
++{
++    public int MaxEarlyCheckInMinutes { get; set; } = 60;
++    public int MinSessionMinutes { get; set; } = 30;
++    public double MaxAccuracyMeters { get; set; } = 50;
++    public int QrLifetimeSeconds { get; set; } = 60;
++}
++public sealed class LeaveOptions
++{
++    public DayOfWeek[] ExcludedDays { get; set; } = [DayOfWeek.Saturday, DayOfWeek.Sunday];
++}
++public sealed class BusinessException(string message, int status = 400) : Exception(message)
++{
++    public int Status { get; } = status;
++}
++public static class TimeVn
++{
++    private static readonly TimeZoneInfo Zone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
++    public static DateTime Utc(DateTime value) => value.Kind == DateTimeKind.Local
++        ? value.ToUniversalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc);
++    public static DateTime ToLocal(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(Utc(utc), Zone);
++    public static DateTime ToUtc(DateTime local) => TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), Zone);
++    public static string DayKey(DateTime local) => local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
++}
++public sealed class UtcDateTimeConverter : JsonConverter<DateTime>
++{
++    public override DateTime Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
++    {
++        var text = reader.GetString() ?? "";
++        if (!System.Text.RegularExpressions.Regex.IsMatch(text, @"(Z|[+-]\d{2}:\d{2})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
++            || !DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var value))
++            throw new JsonException("Thời điểm phải có Z hoặc độ lệch múi giờ; ví dụ 2026-10-22T05:50:00Z.");
++        return value.UtcDateTime;
++    }
++    public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options) =>
++        writer.WriteStringValue(TimeVn.Utc(value).ToString("O", CultureInfo.InvariantCulture));
++}
++public static class BusinessRules
++{
++    public static void EnsureCheckoutAllowed(Attendance row, DateTime now, int minimumMinutes)
++    {
++        if (now >= row.AutoCloseAt) throw new BusinessException("Ca đã quá hạn chấm ra; hãy gửi đơn giải trình.",409);
++        if ((now - row.CheckIn).TotalMinutes < minimumMinutes)
++            throw new BusinessException($"Phải cách lần vào ít nhất {minimumMinutes} phút.",409);
++    }
++    public static void ValidateLocation(PunchRequest r, Office office, DateTime now, double maxAccuracy)
++    {
++        if (r.IsMocked) throw new BusinessException("Không chấp nhận vị trí giả lập.",403);
++        if (!double.IsFinite(r.Accuracy) || r.Accuracy < 0 || r.Accuracy > maxAccuracy ||
++            !double.IsFinite(r.Latitude) || Math.Abs(r.Latitude) > 90 ||
++            !double.IsFinite(r.Longitude) || Math.Abs(r.Longitude) > 180 ||
++            (now-r.CapturedAt).TotalSeconds > 60 || r.CapturedAt > now.AddSeconds(5))
++            throw new BusinessException($"GPS không hợp lệ hoặc sai số vượt {maxAccuracy} m.");
++        if (GeoService.DistanceMeters(r.Latitude,r.Longitude,office.Latitude!.Value,office.Longitude!.Value) > office.Radius)
++            throw new BusinessException("Vị trí nằm ngoài bán kính văn phòng.");
++    }
++    public static bool CanUse(Employee e) => e.Active && e.EmailVerified && e.ApprovalStatus == ApprovalStatus.Approved;
++    public static (DateTime Start, DateTime End, DateTime AutoClose) Window(Shift shift, DateTime utc, int earlyMinutes)
++    {
++        var local = TimeVn.ToLocal(utc);
++        var duration = (shift.EndMinute - shift.StartMinute + 1440) % 1440;
++        if (duration == 0) throw new BusinessException("Giờ bắt đầu và kết thúc ca phải khác nhau.");
++        var start = local.Date.AddMinutes(shift.StartMinute);
++        // Find a window containing now, including check-in before a 00:30 shift on the previous date.
++        var candidates = new[] { start.AddDays(-1), start, start.AddDays(1) };
++        start = candidates.Where(x => local >= x.AddMinutes(-earlyMinutes) && local < x.AddMinutes(duration))
++            .OrderBy(x => Math.Abs((local - x).TotalMinutes)).FirstOrDefault();
++        if (start == default) throw new BusinessException($"Chỉ được vào trước giờ ca tối đa {earlyMinutes} phút và trước khi ca kết thúc.", 409);
++        var end = start.AddMinutes(duration);
++        return (TimeVn.ToUtc(start), TimeVn.ToUtc(end), TimeVn.ToUtc(end.Date.AddDays(1)));
++    }
++    public static int Late(DateTime now, DateTime start, int grace) => Math.Max(0, (int)Math.Ceiling((now - start).TotalMinutes - grace));
++    public static int Early(DateTime now, DateTime end, int grace) => Math.Max(0, (int)Math.Ceiling((end - now).TotalMinutes - grace));
++    public static int NetMinutes(DateTime start, DateTime end, int rest) => Math.Max(0, (int)Math.Floor((end - start).TotalMinutes) - rest);
++    public static int LeaveDays(DateOnly from, DateOnly to, LeaveOptions options)
++    {
++        if (from.Year < 1970 || to.Year > 9998 || to < from || to.DayNumber - from.DayNumber > 365)
++            throw new BusinessException("Khoảng ngày phải hợp lệ, có đủ ngày bắt đầu/kết thúc và không quá 366 ngày.");
++        return Enumerable.Range(0, to.DayNumber - from.DayNumber + 1)
++            .Count(i => !options.ExcludedDays.Contains(from.AddDays(i).DayOfWeek));
++    }
++    public static bool CanReview(Guid reviewer, string reviewerRole, Guid owner, string ownerRole) =>
++        reviewer != owner && (reviewerRole == Roles.Admin || reviewerRole == Roles.Manager && ownerRole == Roles.Employee);
++    public static AttendanceDto Dto(Attendance a, string? name) => new(a.Id, a.EmployeeId, name, a.ShiftName,
++        a.WorkDate, a.CheckIn, a.ScheduledEnd, a.LateMinutes, a.Latitude, a.Longitude, a.Accuracy,
++        a.CheckOut, a.OutLatitude, a.OutLongitude, a.ScheduledStart, a.BreakMinutes, a.ExpectedMinutes,
++        a.EarlyLeaveGraceMinutes, a.EarlyLeaveMinutes, a.NetMinutes, a.IsAutoClosed, a.AutoClosedAt, a.Status);
++}
++
++public sealed class QrService(Microsoft.Extensions.Options.IOptions<AttendanceOptions> options)
++{
++    public static string NewSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
++    private static string Sign(string secret, string data) => Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(data)));
++    public QrResponse Create(string secret, DateTime nowUtc)
++    {
++        var issued = new DateTimeOffset(TimeVn.Utc(nowUtc)).ToUnixTimeSeconds();
++        var data = $"BAOAN:{issued}:{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}";
++        return new($"{data}:{Sign(secret, data)}", DateTimeOffset.FromUnixTimeSeconds(issued + options.Value.QrLifetimeSeconds).UtcDateTime);
++    }
++    public bool IsValid(string secret, string? code, DateTime nowUtc)
++    {
++        if (string.IsNullOrEmpty(secret) || code == null || code.Length > 200) return false;
++        var p = code.Split(':');
++        if (p.Length != 4 || p[0] != "BAOAN" || p[2].Length != 32 || p[3].Length != 64 || !long.TryParse(p[1], out var issued)) return false;
++        var now = new DateTimeOffset(TimeVn.Utc(nowUtc)).ToUnixTimeSeconds();
++        if (issued > now || now - issued >= options.Value.QrLifetimeSeconds) return false;
++        return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(p[3]), Encoding.ASCII.GetBytes(Sign(secret, string.Join(':', p.Take(3)))));
++    }
++}
+--- a/WebAPI_TongNhatBaoAn/Services/Services.cs
++++ b/WebAPI_TongNhatBaoAn/Services/Services.cs
+@@ -11,15 +11,6 @@
+ namespace WebAPI_TongNhatBaoAn.Services;
+ 
+ /// <summary>Múi giờ Việt Nam (UTC+7, không có giờ mùa hè). Dữ liệu lưu UTC, nghiệp vụ tính theo giờ VN.</summary>
+-public static class TimeVn
+-{
+-    public static readonly TimeSpan Offset = TimeSpan.FromHours(7);
+-    public static DateTime ToLocal(DateTime utc) => DateTime.SpecifyKind(utc, DateTimeKind.Utc).Add(Offset).WithKind(DateTimeKind.Unspecified);
+-    public static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local - Offset, DateTimeKind.Utc);
+-    public static string DayKey(DateTime d) => d.ToString("yyyy-MM-dd");
+-    private static DateTime WithKind(this DateTime d, DateTimeKind k) => DateTime.SpecifyKind(d, k);
+-}
+-
+ public static class GeoService
+ {
+     public static double DistanceMeters(double lat1, double lon1, double lat2, double lon2)
+@@ -28,34 +19,6 @@
+         var h = Math.Pow(Math.Sin((lat1 - lat2) * rad / 2), 2) +
+                 Math.Cos(lat1 * rad) * Math.Cos(lat2 * rad) * Math.Pow(Math.Sin((lon1 - lon2) * rad / 2), 2);
+         return 6371000 * 2 * Math.Atan2(Math.Sqrt(h), Math.Sqrt(Math.Max(0, 1 - h)));
+-    }
+-}
+-
+-public class QrService
+-{
+-    public static string NewSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+-
+-    private static string Sign(string secret, long slot)
+-    {
+-        using var h = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+-        return $"BAOAN:{slot}:{Convert.ToHexString(h.ComputeHash(Encoding.UTF8.GetBytes($"baoan:{slot}"))).ToLowerInvariant()}";
+-    }
+-
+-    public static long SlotOf(DateTime utc) => new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)).ToUnixTimeSeconds() / 60;
+-
+-    public QrResponse Create(string secret, DateTime nowUtc)
+-    {
+-        var slot = SlotOf(nowUtc);
+-        return new QrResponse(Sign(secret, slot), DateTimeOffset.FromUnixTimeSeconds((slot + 2) * 60).UtcDateTime);
+-    }
+-
+-    public bool IsValid(string secret, string? code, DateTime nowUtc)
+-    {
+-        if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(code)) return false;
+-        var slot = SlotOf(nowUtc);
+-        var given = Encoding.UTF8.GetBytes(code);
+-        return new[] { slot, slot - 1 }.Any(s =>
+-            CryptographicOperations.FixedTimeEquals(given, Encoding.UTF8.GetBytes(Sign(secret, s))));
+     }
+ }
+ 
+--- a/WebAPI_TongNhatBaoAn/Services/StatisticsService.cs
++++ b/WebAPI_TongNhatBaoAn/Services/StatisticsService.cs
+@@ -0,0 +1,58 @@
++using Microsoft.EntityFrameworkCore;
++using WebAPI_TongNhatBaoAn.Data;
++using WebAPI_TongNhatBaoAn.Models;
++namespace WebAPI_TongNhatBaoAn.Services;
++
++public record AttendanceSummary(int EligibleShifts, int OnTimeShifts, int AdequateShifts, int ActualCheckouts,
++    double NetHours, double Score, string Rating, string AnalysisTitle = "Phân tích tự động")
++{
++    public int LateShifts { get; init; }
++    public int TotalLateMinutes { get; init; }
++}
++public record RankingRow(Guid EmployeeId, string Name, AttendanceSummary Summary);
++public static class AttendanceScoring
++{
++    public static AttendanceSummary Calculate(IEnumerable<Attendance> source, DateTime now)
++    {
++        var rows = source.Where(a => a.ScheduledEnd <= now || a.CheckOut != null).ToList();
++        bool Actual(Attendance a) => a.CheckOut != null && !a.IsAutoClosed && a.CheckOut > a.CheckIn &&
++            !a.Status.HasFlag(AttendanceStatus.BatThuong);
++        var onTime = rows.Count(a => a.LateMinutes == 0 && !a.Status.HasFlag(AttendanceStatus.BatThuong));
++        var adequate = rows.Count(a => Actual(a) && a.NetMinutes > 0 && a.ExpectedMinutes > 0 && a.NetMinutes >= a.ExpectedMinutes);
++        var checkout = rows.Count(Actual);
++        var minutes = rows.Where(Actual).Sum(a => (long)Math.Max(0,a.NetMinutes));
++        var score = rows.Count == 0 || minutes == 0 ? 0 : Math.Round((40d * onTime + 30d * adequate + 30d * checkout) / rows.Count,1);
++        var rating = minutes == 0 ? "Chưa có giờ công hợp lệ" : score >= 90 ? "Xuất sắc" : score >= 75 ? "Khá tốt" : score >= 50 ? "Cần cải thiện" : "Chưa đạt";
++        return new(rows.Count,onTime,adequate,checkout,minutes / 60d,score,rating) {
++            LateShifts = rows.Count(a => a.LateMinutes > 0),
++            TotalLateMinutes = rows.Sum(a => Math.Max(0,a.LateMinutes))
++        };
++    }
++}
++public sealed class StatisticsService(AppDb db, AttendanceService attendance, TimeProvider clock)
++{
++    private async Task<List<Attendance>> Load(DateOnly from, DateOnly to, Guid? employee)
++    {
++        if (from.Year < 1970 || to.Year > 9998 || to < from || to.DayNumber - from.DayNumber > 365)
++            throw new BusinessException("Chọn đủ ngày bắt đầu/kết thúc, khoảng thống kê tối đa 366 ngày.");
++        await attendance.CloseOverdueAsync();
++        var start = TimeVn.ToUtc(from.ToDateTime(TimeOnly.MinValue));
++        var end = TimeVn.ToUtc(to.AddDays(1).ToDateTime(TimeOnly.MinValue));
++        var q = db.Attendance.AsNoTracking().Where(a => a.ScheduledStart >= start && a.ScheduledStart < end);
++        if (employee != null) q = q.Where(a => a.EmployeeId == employee);
++        return await q.ToListAsync();
++    }
++    public async Task<AttendanceSummary> Personal(Guid id,DateOnly from,DateOnly to) =>
++        AttendanceScoring.Calculate(await Load(from,to,id), clock.GetUtcNow().UtcDateTime);
++    public async Task<object> Company(DateOnly from, DateOnly to)
++    {
++        var employees = await db.Employees.AsNoTracking().Where(e => e.Active && e.EmailVerified && (e.Role == Roles.Employee || e.Role == Roles.Manager) && e.ApprovalStatus == ApprovalStatus.Approved)
++            .Select(e => new { e.Id, e.Name }).ToListAsync();
++        var ids = employees.Select(e => e.Id).ToHashSet();
++        var rows = (await Load(from,to,null)).Where(a => ids.Contains(a.EmployeeId)).ToList();
++        var now = clock.GetUtcNow().UtcDateTime;
++        var ranking = employees.Select(e => new RankingRow(e.Id,e.Name,AttendanceScoring.Calculate(rows.Where(a => a.EmployeeId == e.Id),now)))
++            .Where(r => r.Summary.NetHours > 0).OrderByDescending(r => r.Summary.Score).ThenByDescending(r => r.Summary.NetHours).ThenBy(r => r.EmployeeId).ToList();
++        return new { activeEmployees = employees.Count, summary = AttendanceScoring.Calculate(rows,now), ranking };
++    }
++}
+--- a/lib/data/api_repositories.dart
++++ b/lib/data/api_repositories.dart
+@@ -206,12 +206,18 @@
+         'startMinute': s.startMinute,
+         'endMinute': s.endMinute,
+         'grace': s.grace,
++        'breakMinutes': s.breakMinutes,
++        'earlyLeaveGraceMinutes': s.earlyLeaveGraceMinutes,
+       },
+     );
+     return Shift.fromJson(res);
+   }
+ 
+-  Future<Shift> update(Shift s) async {
++  Future<Shift> update(
++    Shift s, {
++    int? breakMinutes,
++    int? earlyLeaveGraceMinutes,
++  }) async {
+     final res = await client.patch(
+       '/api/shifts/${s.id}',
+       body: {
+@@ -219,6 +225,8 @@
+         'startMinute': s.startMinute,
+         'endMinute': s.endMinute,
+         'grace': s.grace,
++        'breakMinutes': ?breakMinutes,
++        'earlyLeaveGraceMinutes': ?earlyLeaveGraceMinutes,
+       },
+     );
+     return Shift.fromJson(res);
+@@ -383,9 +391,16 @@
+   final ApiClient client;
+   RequestRepository(this.client);
+ 
+-  Future<List<WorkRequest>> list({String? status}) async {
++  Future<List<WorkRequest>> list({String? status}) => mine(status: status);
++
++  Future<List<WorkRequest>> pendingReview() async {
++    final res = await client.get('/api/requests/pending-review') as List;
++    return res.map((j) => WorkRequest.fromJson(j)).toList();
++  }
++
++  Future<List<WorkRequest>> mine({String? status}) async {
+     final query = status != null ? {'status': status} : null;
+-    final res = await client.get('/api/requests', query: query) as List;
++    final res = await client.get('/api/requests/mine', query: query) as List;
+     return res.map((j) => WorkRequest.fromJson(j)).toList();
+   }
+ 
+@@ -432,3 +447,63 @@
+     return WorkRequest.fromJson(res);
+   }
+ }
++
++class RegistrationApprovalRepository {
++  final ApiClient client;
++  RegistrationApprovalRepository(this.client);
++  Future<List<dynamic>> pending() async =>
++      (await client.get('/api/registrations/pending')) as List;
++  Future<Employee> review({
++    required String id,
++    required bool approve,
++    required String note,
++    required int version,
++  }) async => Employee.fromJson(
++    await client.post(
++      '/api/registrations/$id/review',
++      body: {'approve': approve, 'note': note.trim(), 'version': version},
++    ),
++  );
++}
++
++class StatisticsSummary {
++  final int totalLateMinutes;
++  final int eligibleShifts,
++      onTimeShifts,
++      adequateShifts,
++      actualCheckouts,
++      lateShifts;
++  final double netHours, score;
++  final String rating, analysisTitle;
++  StatisticsSummary.fromJson(Json j)
++    : eligibleShifts = (j['eligibleShifts'] as num).toInt(),
++      lateShifts = (j['lateShifts'] as num?)?.toInt() ?? 0,
++      totalLateMinutes = (j['totalLateMinutes'] as num?)?.toInt() ?? 0,
++      onTimeShifts = (j['onTimeShifts'] as num).toInt(),
++      adequateShifts = (j['adequateShifts'] as num).toInt(),
++      actualCheckouts = (j['actualCheckouts'] as num).toInt(),
++      netHours = (j['netHours'] as num).toDouble(),
++      score = (j['score'] as num).toDouble(),
++      rating = j['rating'].toString(),
++      analysisTitle = j['analysisTitle'].toString();
++}
++
++class StatisticsRepository {
++  final ApiClient client;
++  StatisticsRepository(this.client);
++  Future<StatisticsSummary> mine(DateTime from, DateTime to) async =>
++      StatisticsSummary.fromJson(
++        await client.get(
++          '/api/statistics/mine',
++          query: {'from': dayKey(from), 'to': dayKey(to)},
++        ),
++      );
++  // Company response contains activeEmployees, summary, ranking.
++  Future<Json> company(DateTime from, DateTime to) async =>
++      Map<String, dynamic>.from(
++        await client.get(
++          '/api/statistics/company',
++          query: {'from': dayKey(from), 'to': dayKey(to)},
++        ),
++      );
++}
+--- a/lib/domain/models.dart
++++ b/lib/domain/models.dart
+@@ -1,6 +1,15 @@
+ import 'dart:math';
+ 
+ typedef Json = Map<String, dynamic>;
++
++// API instants must carry a timezone. Date-only values use DateTime.parse separately.
++DateTime parseApiInstant(Object? value) {
++  final text = value?.toString() ?? '';
++  if (!RegExp(r'(Z|[+-]\d{2}:\d{2})$', caseSensitive: false).hasMatch(text)) {
++    throw FormatException('API thiếu múi giờ Z/offset', text);
++  }
++  return DateTime.parse(text).toUtc().toLocal();
++}
+ 
+ String newId() =>
+     '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+@@ -19,6 +28,7 @@
+   String name, email, username, department, role, passwordHash, salt;
+   String? shiftId;
+   bool active;
++  String approvalStatus;
+ 
+   Employee({
+     required this.id,
+@@ -31,6 +41,7 @@
+     this.salt = '',
+     this.shiftId,
+     this.active = true,
++    this.approvalStatus = 'Approved',
+   });
+ 
+   bool get isAdmin => role == 'admin';
+@@ -48,6 +59,7 @@
+     'salt': salt,
+     'shiftId': shiftId,
+     'active': active,
++    'approvalStatus': approvalStatus,
+   };
+ 
+   factory Employee.fromJson(Json j) => Employee(
+@@ -61,6 +73,7 @@
+     salt: j['salt']?.toString() ?? '',
+     shiftId: j['shiftId']?.toString(),
+     active: j['active'] as bool? ?? true,
++    approvalStatus: j['approvalStatus']?.toString() ?? 'Approved',
+   );
+ }
+ 
+@@ -69,17 +82,9 @@
+   String name;
+   String? description;
+ 
+-  Department({
+-    required this.id,
+-    required this.name,
+-    this.description,
+-  });
+-
+-  Json toJson() => {
+-    'id': id,
+-    'name': name,
+-    'description': description,
+-  };
++  Department({required this.id, required this.name, this.description});
++
++  Json toJson() => {'id': id, 'name': name, 'description': description};
+ 
+   factory Department.fromJson(Json j) => Department(
+     id: j['id']?.toString() ?? '',
+@@ -91,7 +96,7 @@
+ class Shift {
+   final String id;
+   String name;
+-  int startMinute, endMinute, grace;
++  int startMinute, endMinute, grace, breakMinutes, earlyLeaveGraceMinutes;
+ 
+   Shift({
+     required this.id,
+@@ -99,6 +104,8 @@
+     required this.startMinute,
+     required this.endMinute,
+     this.grace = 5,
++    this.breakMinutes = 0,
++    this.earlyLeaveGraceMinutes = 5,
+   });
+ 
+   DateTime startOn(DateTime d) =>
+@@ -116,6 +123,8 @@
+     'startMinute': startMinute,
+     'endMinute': endMinute,
+     'grace': grace,
++    'breakMinutes': breakMinutes,
++    'earlyLeaveGraceMinutes': earlyLeaveGraceMinutes,
+   };
+ 
+   factory Shift.fromJson(Json j) => Shift(
+@@ -124,13 +133,20 @@
+     startMinute: (j['startMinute'] ?? j['start'] ?? 0) as int,
+     endMinute: (j['endMinute'] ?? j['end'] ?? 0) as int,
+     grace: (j['grace'] ?? 5) as int,
++    breakMinutes: (j['breakMinutes'] as num?)?.toInt() ?? 0,
++    earlyLeaveGraceMinutes: (j['earlyLeaveGraceMinutes'] as num?)?.toInt() ?? 5,
+   );
+ }
+ 
+ class Attendance {
+   final String id, employeeId, shiftName;
+   final DateTime checkIn, scheduledEnd;
+-  final int lateMinutes;
++  final DateTime? scheduledStart, autoClosedAt;
++  final int lateMinutes, earlyLeaveMinutes, breakMinutes, expectedMinutes;
++  final int earlyLeaveGraceMinutes;
++  final int? netMinutes;
++  final bool isAutoClosed;
++  final String status;
+   final double latitude, longitude, accuracy;
+   DateTime? checkOut;
+   double? outLatitude, outLongitude;
+@@ -150,65 +166,90 @@
+     this.outLatitude,
+     this.outLongitude,
+     this.employeeName,
++    this.scheduledStart,
++    this.autoClosedAt,
++    this.earlyLeaveMinutes = 0,
++    this.breakMinutes = 0,
++    this.expectedMinutes = 0,
++    this.earlyLeaveGraceMinutes = 0,
++    this.netMinutes,
++    this.isAutoClosed = false,
++    this.status = 'BatThuong',
+   });
+ 
++  bool get isAbnormal => status.split(',').any((s) => s.trim() == 'BatThuong');
++  bool get hasActualCheckout =>
++      checkOut != null &&
++      !isAutoClosed &&
++      checkOut!.isAfter(checkIn) &&
++      !isAbnormal;
++  double get hours =>
++      hasActualCheckout ? (netMinutes ?? 0).clamp(0, 2147483647) / 60 : 0;
++
+   String get explanation {
+-    final items = <String>[];
+-    String formatDuration(int minutes) {
+-      final h = minutes ~/ 60;
+-      final m = minutes % 60;
+-      if (h > 0 && m > 0) return '$h giờ $m phút';
+-      if (h > 0) return '$h giờ';
+-      return '$m phút';
++    if (isAutoClosed) {
++      return 'Quên check-out. Ca tự đóng, chưa được tính giờ công.';
+     }
+-
+-    if (lateMinutes > 0) {
+-      items.add('Đi trễ ${formatDuration(lateMinutes)} (đã trừ dung sai).');
++    if (isAbnormal) {
++      return 'Bất thường: cần đối soát bản ghi trước khi tính công.';
+     }
+-    if (checkOut == null && DateTime.now().isAfter(scheduledEnd)) {
+-      items.add(
+-        'Đã hết ca nhưng chưa ghi nhận giờ ra. Hãy chấm công ra hoặc gửi đơn giải trình.',
+-      );
+-    }
+-    if (checkOut != null && checkOut!.isBefore(scheduledEnd)) {
+-      final earlyMin = scheduledEnd.difference(checkOut!).inMinutes;
+-      items.add('Ra sớm ${formatDuration(earlyMin)}.');
+-    }
+-    return items.isEmpty
+-        ? (checkOut == null ? 'Đang trong ca làm.' : 'Không có bất thường.')
+-        : items.join(' ');
++    final parts = <String>[
++      if (lateMinutes > 0) 'Đi trễ $lateMinutes phút (đã trừ dung sai).',
++      if (earlyLeaveMinutes > 0)
++        'Về sớm $earlyLeaveMinutes phút (đã trừ dung sai).',
++    ];
++    if (parts.isNotEmpty) return parts.join(' ');
++    return checkOut == null ? 'Đang trong ca, chưa có giờ ra.' : 'Đúng giờ.';
+   }
+-
+-  double get hours =>
+-      checkOut == null ? 0 : checkOut!.difference(checkIn).inMinutes / 60;
+ 
+   Json toJson() => {
+     'id': id,
+     'employeeId': employeeId,
+     'shiftName': shiftName,
+-    'checkIn': checkIn.toIso8601String(),
+-    'scheduledEnd': scheduledEnd.toIso8601String(),
++    'checkIn': checkIn.toUtc().toIso8601String(),
++    'scheduledEnd': scheduledEnd.toUtc().toIso8601String(),
++    'scheduledStart': scheduledStart?.toUtc().toIso8601String(),
++    'checkOut': checkOut?.toUtc().toIso8601String(),
++    'autoClosedAt': autoClosedAt?.toUtc().toIso8601String(),
+     'lateMinutes': lateMinutes,
++    'earlyLeaveMinutes': earlyLeaveMinutes,
++    'breakMinutes': breakMinutes,
++    'expectedMinutes': expectedMinutes,
++    'earlyLeaveGraceMinutes': earlyLeaveGraceMinutes,
++    'netMinutes': netMinutes,
++    'isAutoClosed': isAutoClosed,
++    'status': status,
+     'latitude': latitude,
+     'longitude': longitude,
+     'accuracy': accuracy,
+-    'checkOut': checkOut?.toIso8601String(),
+     'outLatitude': outLatitude,
+     'outLongitude': outLongitude,
+     'employeeName': employeeName,
+   };
+-
+   factory Attendance.fromJson(Json j) => Attendance(
+-    id: j['id']?.toString() ?? '',
+-    employeeId: j['employeeId']?.toString() ?? '',
++    id: j['id'].toString(),
++    employeeId: j['employeeId'].toString(),
+     shiftName: j['shiftName']?.toString() ?? '',
+-    checkIn: DateTime.parse(j['checkIn']).toLocal(),
+-    scheduledEnd: DateTime.parse(j['scheduledEnd']).toLocal(),
+-    lateMinutes: (j['lateMinutes'] ?? 0) as int,
++    checkIn: parseApiInstant(j['checkIn']),
++    scheduledEnd: parseApiInstant(j['scheduledEnd']),
++    scheduledStart: j['scheduledStart'] == null
++        ? null
++        : parseApiInstant(j['scheduledStart']),
++    checkOut: j['checkOut'] == null ? null : parseApiInstant(j['checkOut']),
++    autoClosedAt: j['autoClosedAt'] == null
++        ? null
++        : parseApiInstant(j['autoClosedAt']),
++    lateMinutes: (j['lateMinutes'] as num?)?.toInt() ?? 0,
++    earlyLeaveMinutes: (j['earlyLeaveMinutes'] as num?)?.toInt() ?? 0,
++    breakMinutes: (j['breakMinutes'] as num?)?.toInt() ?? 0,
++    expectedMinutes: (j['expectedMinutes'] as num?)?.toInt() ?? 0,
++    earlyLeaveGraceMinutes: (j['earlyLeaveGraceMinutes'] as num?)?.toInt() ?? 0,
++    netMinutes: (j['netMinutes'] as num?)?.toInt(),
++    isAutoClosed: j['isAutoClosed'] as bool? ?? false,
++    status: j['status']?.toString() ?? 'BatThuong',
+     latitude: (j['latitude'] as num).toDouble(),
+     longitude: (j['longitude'] as num).toDouble(),
+     accuracy: (j['accuracy'] as num).toDouble(),
+-    checkOut: j['checkOut'] == null ? null : DateTime.parse(j['checkOut']).toLocal(),
+     outLatitude: (j['outLatitude'] as num?)?.toDouble(),
+     outLongitude: (j['outLongitude'] as num?)?.toDouble(),
+     employeeName: j['employeeName']?.toString(),
+@@ -220,6 +261,9 @@
+   String type, reason, status, reviewerNote;
+   DateTime from, to;
+   int? version;
++  int days;
++  String? reviewedBy, reviewerName;
++  DateTime? reviewedAt;
+   String? employeeName;
+ 
+   WorkRequest({
+@@ -232,6 +276,10 @@
+     this.status = 'pending',
+     this.reviewerNote = '',
+     this.version,
++    this.days = 0,
++    this.reviewedBy,
++    this.reviewerName,
++    this.reviewedAt,
+     this.employeeName,
+   });
+ 
+@@ -245,6 +293,10 @@
+     'status': status,
+     'reviewerNote': reviewerNote,
+     'version': version,
++    'days': days,
++    'reviewedBy': reviewedBy,
++    'reviewerName': reviewerName,
++    'reviewedAt': reviewedAt?.toUtc().toIso8601String(),
+     'employeeName': employeeName,
+   };
+ 
+@@ -258,6 +310,12 @@
+     status: j['status']?.toString() ?? 'pending',
+     reviewerNote: j['reviewerNote']?.toString() ?? '',
+     version: j['version'] as int?,
++    days: (j['days'] as num?)?.toInt() ?? 0,
++    reviewedBy: j['reviewedBy']?.toString(),
++    reviewerName: j['reviewerName']?.toString(),
++    reviewedAt: j['reviewedAt'] == null
++        ? null
++        : parseApiInstant(j['reviewedAt']),
+     employeeName: j['employeeName']?.toString(),
+   );
+ }
+@@ -269,16 +327,18 @@
+   bool isServerConfigured;
+ 
+   Office({
+-    this.name = 'Văn phòng',
++    this.name = 'Văn phòng chính',
+     this.qrSecret = '',
+     this.latitude,
+     this.longitude,
+-    this.radius = 150,
++    this.radius = 100,
+     this.isServerConfigured = false,
+   });
+ 
+   bool get configured =>
+-      (latitude != null && longitude != null && (qrSecret.isNotEmpty || isServerConfigured));
++      (latitude != null &&
++      longitude != null &&
++      (qrSecret.isNotEmpty || isServerConfigured));
+ 
+   Json toJson() => {
+     'name': name,
+@@ -290,12 +350,14 @@
+   };
+ 
+   factory Office.fromJson(Json j) => Office(
+-    name: j['name']?.toString() ?? 'Văn phòng',
++    name: j['name']?.toString() ?? 'Văn phòng chính',
+     qrSecret: j['qrSecret']?.toString() ?? '',
+     latitude: (j['latitude'] as num?)?.toDouble(),
+     longitude: (j['longitude'] as num?)?.toDouble(),
+-    radius: (j['radius'] as num?)?.toDouble() ?? 150,
+-    isServerConfigured: j['configured'] as bool? ?? (j['latitude'] != null && j['longitude'] != null),
++    radius: (j['radius'] as num?)?.toDouble() ?? 100,
++    isServerConfigured:
++        j['configured'] as bool? ??
++        (j['latitude'] != null && j['longitude'] != null),
+   );
+ }
+ 
+@@ -333,23 +395,25 @@
+ 
+   factory AppData.fromJson(Json j) {
+     return AppData(
+-      employees: (j['employees'] as List?)
++      employees:
++          (j['employees'] as List?)
+               ?.map((e) => Employee.fromJson(e))
+               .toList() ??
+           [],
+-      departments: (j['departments'] as List?)
++      departments:
++          (j['departments'] as List?)
+               ?.map((d) => Department.fromJson(d))
+               .toList() ??
+           [],
+-      shifts: (j['shifts'] as List?)
+-              ?.map((e) => Shift.fromJson(e))
+-              .toList() ??
+-          [],
+-      attendance: (j['attendance'] as List?)
++      shifts:
++          (j['shifts'] as List?)?.map((e) => Shift.fromJson(e)).toList() ?? [],
++      attendance:
++          (j['attendance'] as List?)
+               ?.map((e) => Attendance.fromJson(e))
+               .toList() ??
+           [],
+-      requests: (j['requests'] as List?)
++      requests:
++          (j['requests'] as List?)
+               ?.map((e) => WorkRequest.fromJson(e))
+               .toList() ??
+           [],

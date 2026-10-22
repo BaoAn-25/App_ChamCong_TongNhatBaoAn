@@ -1,0 +1,14 @@
+{
+  "Attendance": {
+    "MaxEarlyCheckInMinutes": 60,
+    "MinSessionMinutes": 30,
+    "MaxAccuracyMeters": 50,
+    "QrLifetimeSeconds": 60
+  },
+  "Leave": {
+    "ExcludedDays": ["Saturday", "Sunday"]
+  },
+  "Seed": {
+    "AdminName": "Tống Nhật Bảo An"
+  }
+}

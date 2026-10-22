@@ -167,6 +167,52 @@ namespace WebAPI_TongNhatBaoAn.Data.Migrations
                     b.ToTable("Employees");
                 });
 
+            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Consumed")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmployeeId", "ExpiresAt");
+
+                    b.ToTable("FaceGrants");
+                });
+
+            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
+                {
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AllowLogin")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Template")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("EmployeeId");
+
+                    b.ToTable("FaceProfiles");
+                });
+
             modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.Office", b =>
                 {
                     b.Property<int>("Id")
@@ -354,6 +400,24 @@ namespace WebAPI_TongNhatBaoAn.Data.Migrations
                         .WithMany()
                         .HasForeignKey("ShiftId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceGrant", b =>
+                {
+                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.FaceProfile", b =>
+                {
+                    b.HasOne("WebAPI_TongNhatBaoAn.Models.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("WebAPI_TongNhatBaoAn.Models.OtpChallenge", b =>

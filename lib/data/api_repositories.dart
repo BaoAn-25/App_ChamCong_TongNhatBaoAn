@@ -47,6 +47,18 @@ class AuthService {
     return res['challengeId'].toString();
   }
 
+  Future<String> faceLogin({
+    required String username,
+    required String image,
+  }) async {
+    final res = await client.post(
+      '/api/auth/face-login',
+      auth: false,
+      body: {'username': username.trim(), 'image': image},
+    );
+    return res['challengeId'].toString();
+  }
+
   Future<Employee> verifyOtp({
     required String challengeId,
     required String code,
@@ -230,10 +242,7 @@ class DepartmentRepository {
   Future<Department> create(Department d) async {
     final res = await client.post(
       '/api/departments',
-      body: {
-        'name': d.name.trim(),
-        'description': d.description?.trim(),
-      },
+      body: {'name': d.name.trim(), 'description': d.description?.trim()},
     );
     return Department.fromJson(res);
   }
@@ -241,10 +250,7 @@ class DepartmentRepository {
   Future<Department> update(Department d) async {
     final res = await client.patch(
       '/api/departments/${d.id}',
-      body: {
-        'name': d.name.trim(),
-        'description': d.description?.trim(),
-      },
+      body: {'name': d.name.trim(), 'description': d.description?.trim()},
     );
     return Department.fromJson(res);
   }
@@ -294,6 +300,7 @@ class AttendanceRepository {
     required DateTime capturedAt,
     required String idempotencyKey,
     bool isMocked = false,
+    String? faceProof,
   }) async {
     final res = await client.post(
       '/api/attendance/check-in',
@@ -305,6 +312,7 @@ class AttendanceRepository {
         'capturedAt': capturedAt.toUtc().toIso8601String(),
         'idempotencyKey': idempotencyKey,
         'isMocked': isMocked,
+        'faceProof': ?faceProof,
       },
     );
     return Attendance.fromJson(res);
@@ -318,6 +326,7 @@ class AttendanceRepository {
     required DateTime capturedAt,
     required String idempotencyKey,
     bool isMocked = false,
+    String? faceProof,
   }) async {
     final res = await client.post(
       '/api/attendance/check-out',
@@ -329,6 +338,7 @@ class AttendanceRepository {
         'capturedAt': capturedAt.toUtc().toIso8601String(),
         'idempotencyKey': idempotencyKey,
         'isMocked': isMocked,
+        'faceProof': ?faceProof,
       },
     );
     return Attendance.fromJson(res);

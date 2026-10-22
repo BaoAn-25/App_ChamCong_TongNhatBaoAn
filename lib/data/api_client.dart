@@ -277,6 +277,11 @@ class ApiClient {
       message = body['error'].toString();
     } else if (body is Map && body['message'] != null) {
       message = body['message'].toString();
+    } else if (res.statusCode == 429) {
+      message =
+          'Bạn thao tác quá nhanh. Vui lòng chờ khoảng một phút rồi thử lại.';
+    } else if (res.statusCode == 413) {
+      message = 'Ảnh quá lớn. Vui lòng chụp lại trong ứng dụng.';
     } else if (res.statusCode == 403) {
       message = 'Bạn không có quyền thực hiện thao tác này.';
     } else if (res.statusCode == 404) {

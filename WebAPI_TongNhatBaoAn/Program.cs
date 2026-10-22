@@ -27,6 +27,9 @@ builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.AddHttpClient<OtpEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<QrService>();
+builder.Services.AddHttpClient<FaceMatcher>(client => client.Timeout = TimeSpan.FromSeconds(25));
+builder.Services.AddSingleton<FaceTemplateCipher>();
+builder.Services.AddScoped<FaceAttendancePolicy>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
 {
@@ -63,6 +66,9 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("auth", ctx => RateLimitPartition.GetFixedWindowLimiter(
         ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1) }));
+    o.AddPolicy("face", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.User.FindFirst("uid")?.Value ?? ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1) }));
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
@@ -96,8 +102,8 @@ else
 app.UseForwardedHeaders();
 app.UseSwagger();
 app.UseSwaggerUI();
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapGet("/", () => Results.Redirect("/swagger"));

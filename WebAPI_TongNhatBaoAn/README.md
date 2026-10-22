@@ -50,3 +50,7 @@ Sức khỏe: `/health/live`, `/health/ready`.
 ## Gửi OTP trên Render
 
 Xem [hướng dẫn cấu hình Brevo](../docs/RENDER_EMAIL_OTP.md). Production không trả OTP trực tiếp dù bật DebugReturnOtp.
+
+## Xác thực khuôn mặt khi vào/ra ca
+
+Xem [hướng dẫn triển khai và test](../docs/FACE_ATTENDANCE.md). Docker chạy thêm worker OpenCV nội bộ, migration AddFaceIdentity lưu mẫu mã hóa và bằng chứng dùng một lần.

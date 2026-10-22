@@ -15,8 +15,21 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<OtpChallenge> OtpChallenges => Set<OtpChallenge>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    public DbSet<FaceProfile> FaceProfiles => Set<FaceProfile>();
+    public DbSet<FaceGrant> FaceGrants => Set<FaceGrant>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<FaceProfile>(e =>
+        {
+            e.HasKey(x => x.EmployeeId);
+            e.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<FaceGrant>(e =>
+        {
+            e.HasOne<Employee>().WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.EmployeeId, x.ExpiresAt });
+        });
         b.Entity<Employee>(e =>
         {
             e.HasIndex(x => x.Username).IsUnique();

@@ -14,6 +14,7 @@ import 'common.dart';
 import 'punch_page.dart';
 import 'stats_page.dart';
 import 'biometric_page.dart';
+import 'face_page.dart';
 
 class HomePage extends StatefulWidget {
   final AppController controller;
@@ -25,6 +26,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int page = 0;
   bool performing = false;
+  bool locating = false;
   String search = '', requestFilter = 'all', roleFilter = 'all';
   String? deptFilter;
   String? _avatarBase64;
@@ -79,19 +81,31 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.camera_alt_rounded, color: Color(0xFF087F8C)),
+              leading: const Icon(
+                Icons.camera_alt_rounded,
+                color: Color(0xFF087F8C),
+              ),
               title: const Text('Chụp ảnh từ máy ảnh'),
               onTap: () => Navigator.pop(ctx, ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF087F8C)),
+              leading: const Icon(
+                Icons.photo_library_rounded,
+                color: Color(0xFF087F8C),
+              ),
               title: const Text('Chọn ảnh từ thư viện'),
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
             if (_avatarBase64 != null)
               ListTile(
-                leading: const Icon(Icons.delete_outline_rounded, color: Colors.red),
-                title: const Text('Xóa ảnh đại diện', style: TextStyle(color: Colors.red)),
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.red,
+                ),
+                title: const Text(
+                  'Xóa ảnh đại diện',
+                  style: TextStyle(color: Colors.red),
+                ),
                 onTap: () async {
                   Navigator.pop(ctx);
                   final prefs = await SharedPreferences.getInstance();
@@ -134,9 +148,9 @@ class _HomePageState extends State<HomePage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi tải ảnh: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Lỗi tải ảnh: $e')));
       }
     }
   }
@@ -160,7 +174,10 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Icon(Icons.badge_rounded, color: Color(0xFF087F8C)),
                 SizedBox(width: 8),
-                Text('Chỉnh sửa hồ sơ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(
+                  'Chỉnh sửa hồ sơ',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
             content: SingleChildScrollView(
@@ -176,7 +193,10 @@ class _HomePageState extends State<HomePage> {
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: Colors.red.shade200),
                       ),
-                      child: Text(error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                      child: Text(
+                        error!,
+                        style: const TextStyle(color: Colors.red, fontSize: 13),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -206,8 +226,11 @@ class _HomePageState extends State<HomePage> {
                       helperText: 'Để trống nếu không muốn đổi mật khẩu',
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
-                        icon: Icon(obscurePass ? Icons.visibility_off : Icons.visibility),
-                        onPressed: () => setDialogState(() => obscurePass = !obscurePass),
+                        icon: Icon(
+                          obscurePass ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () =>
+                            setDialogState(() => obscurePass = !obscurePass),
                       ),
                       border: const OutlineInputBorder(),
                     ),
@@ -231,7 +254,10 @@ class _HomePageState extends State<HomePage> {
                   final newPass = passwordCtrl.text.trim();
 
                   if (newName.isEmpty || newUsername.isEmpty) {
-                    setDialogState(() => error = 'Họ tên và tên đăng nhập không được để trống.');
+                    setDialogState(
+                      () => error =
+                          'Họ tên và tên đăng nhập không được để trống.',
+                    );
                     return;
                   }
 
@@ -245,7 +271,9 @@ class _HomePageState extends State<HomePage> {
                     if (mounted) {
                       setState(() {});
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Cập nhật hồ sơ thành công!')),
+                        const SnackBar(
+                          content: Text('Cập nhật hồ sơ thành công!'),
+                        ),
                       );
                     }
                   } catch (e) {
@@ -264,6 +292,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
   AppController get c => widget.controller;
   List<Attendance> get records =>
       c.data.attendance
@@ -286,6 +315,106 @@ class _HomePageState extends State<HomePage> {
       if (mounted) message(context, e);
     } finally {
       if (mounted) setState(() => performing = false);
+    }
+  }
+
+  Future<void> _showCurrentLocation() async {
+    if (locating) return;
+    setState(() => locating = true);
+    try {
+      final p = await acquirePosition();
+      String? address;
+      try {
+        final entries = await geo.Geocoding()
+            .placemarkFromCoordinates(p.latitude, p.longitude)
+            .timeout(const Duration(seconds: 8));
+        if (entries.isNotEmpty) {
+          final pm = entries.first;
+          address =
+              [
+                    pm.street,
+                    pm.subLocality,
+                    pm.locality,
+                    pm.subAdministrativeArea,
+                    pm.administrativeArea,
+                    pm.country,
+                  ]
+                  .whereType<String>()
+                  .where((v) => v.trim().isNotEmpty)
+                  .toSet()
+                  .join(', ');
+        }
+      } catch (_) {
+        /* Coordinates remain available when address lookup fails. */
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Vị trí của bạn'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  address == null || address.isEmpty
+                      ? 'Chưa tra được địa chỉ; tọa độ GPS vẫn dùng được.'
+                      : address,
+                ),
+                const SizedBox(height: 16),
+                SelectableText(
+                  '${p.latitude.toStringAsFixed(6)}, ${p.longitude.toStringAsFixed(6)}\nSai số ±${p.accuracy.round()} m',
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final uri = Uri.parse(
+                      'https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}',
+                    );
+                    try {
+                      if (!await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          ) &&
+                          ctx.mounted) {
+                        message(
+                          ctx,
+                          'Không mở được bản đồ. Hãy sao chép tọa độ.',
+                        );
+                      }
+                    } catch (_) {
+                      if (ctx.mounted) message(ctx, 'Không mở được bản đồ.');
+                    }
+                  },
+                  icon: const Icon(Icons.map_outlined),
+                  label: const Text('Xem Google Maps'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: '${p.latitude}, ${p.longitude}'),
+                    );
+                    if (ctx.mounted) message(ctx, 'Đã sao chép tọa độ.');
+                  },
+                  icon: const Icon(Icons.copy),
+                  label: const Text('Sao chép tọa độ'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) message(context, e);
+    } finally {
+      if (mounted) setState(() => locating = false);
     }
   }
 
@@ -1306,7 +1435,9 @@ class _HomePageState extends State<HomePage> {
                   _filterRoleChip(
                     'Nhân viên',
                     'employee',
-                    c.data.employees.where((e) => !e.isAdmin && !e.isManager).length,
+                    c.data.employees
+                        .where((e) => !e.isAdmin && !e.isManager)
+                        .length,
                     activeColor: Colors.teal.shade800,
                   ),
                   if (c.data.employees.any((e) => !e.active)) ...[
@@ -1339,14 +1470,20 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(width: 8),
                     ChoiceChip(
-                      label: const Text('Tất cả', style: TextStyle(fontSize: 11)),
+                      label: const Text(
+                        'Tất cả',
+                        style: TextStyle(fontSize: 11),
+                      ),
                       selected: deptFilter == null,
                       onSelected: (_) => setState(() => deptFilter = null),
                     ),
                     for (final d in c.data.departments) ...[
                       const SizedBox(width: 6),
                       ChoiceChip(
-                        label: Text(d.name, style: const TextStyle(fontSize: 11)),
+                        label: Text(
+                          d.name,
+                          style: const TextStyle(fontSize: 11),
+                        ),
                         selected:
                             deptFilter?.toLowerCase() == d.name.toLowerCase(),
                         onSelected: (sel) =>
@@ -1710,10 +1847,7 @@ class _HomePageState extends State<HomePage> {
                               }
                             },
                             itemBuilder: (_) => const [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Sửa'),
-                              ),
+                              PopupMenuItem(value: 'edit', child: Text('Sửa')),
                               PopupMenuItem(
                                 value: 'delete',
                                 child: Text('Xóa'),
@@ -1737,50 +1871,46 @@ class _HomePageState extends State<HomePage> {
         child: c.data.departments.isEmpty
             ? const EmptyState('Chưa có phòng ban nào.')
             : Column(
-                children: c.data.departments
-                    .map(
-                      (d) {
-                        final count = c.data.employees
-                            .where((e) => e.department.toLowerCase() == d.name.toLowerCase())
-                            .length;
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.business_outlined),
-                          title: Text(
-                            d.name,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                children: c.data.departments.map((d) {
+                  final count = c.data.employees
+                      .where(
+                        (e) =>
+                            e.department.toLowerCase() == d.name.toLowerCase(),
+                      )
+                      .length;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.business_outlined),
+                    title: Text(
+                      d.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      '$count nhân sự${d.description != null && d.description!.isNotEmpty ? " • ${d.description}" : ""}',
+                    ),
+                    trailing: !c.isAdmin
+                        ? null
+                        : PopupMenuButton<String>(
+                            onSelected: (v) async {
+                              if (v == 'edit') {
+                                editDepartment(d);
+                              } else if (await confirm(
+                                context,
+                                'Xóa phòng ban ${d.name}?',
+                              )) {
+                                await perform(() => c.deleteDepartment(d.id));
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('Sửa')),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Xóa'),
+                              ),
+                            ],
                           ),
-                          subtitle: Text(
-                            '$count nhân sự${d.description != null && d.description!.isNotEmpty ? " • ${d.description}" : ""}',
-                          ),
-                          trailing: !c.isAdmin
-                              ? null
-                              : PopupMenuButton<String>(
-                                  onSelected: (v) async {
-                                    if (v == 'edit') {
-                                      editDepartment(d);
-                                    } else if (await confirm(
-                                      context,
-                                      'Xóa phòng ban ${d.name}?',
-                                    )) {
-                                      await perform(() => c.deleteDepartment(d.id));
-                                    }
-                                  },
-                                  itemBuilder: (_) => const [
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('Sửa'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text('Xóa'),
-                                    ),
-                                  ],
-                                ),
-                        );
-                      },
-                    )
-                    .toList(),
+                  );
+                }).toList(),
               ),
       ),
     ]);
@@ -1789,10 +1919,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> editDepartment([Department? d]) => editForm(
     context,
     title: d == null ? 'Thêm phòng ban mới' : 'Sửa phòng ban',
-    fields: {
-      'Tên phòng ban': d?.name ?? '',
-      'Mô tả': d?.description ?? '',
-    },
+    fields: {'Tên phòng ban': d?.name ?? '', 'Mô tả': d?.description ?? ''},
     save: (v) {
       final name = v['Tên phòng ban']!.trim();
       if (name.isEmpty) throw ArgumentError('Vui lòng nhập tên phòng ban.');
@@ -1862,7 +1989,8 @@ class _HomePageState extends State<HomePage> {
                 badge: 'ADMIN',
                 color: Colors.deepPurple,
                 title: 'Quản trị viên (Toàn quyền)',
-                desc: '• Quản trị nhân sự: Thêm, sửa, xóa, phân quyền, khóa tài khoản\n'
+                desc:
+                    '• Quản trị nhân sự: Thêm, sửa, xóa, phân quyền, khóa tài khoản\n'
                     '• Cấu hình văn phòng: Đặt tọa độ GPS, bán kính, hiển thị QR động\n'
                     '• Quản lý ca làm việc: Tạo ca mới, sửa giờ, xóa ca, phân ca\n'
                     '• Quản lý phòng ban: Thêm, sửa, xóa danh mục phòng ban\n'
@@ -1875,7 +2003,8 @@ class _HomePageState extends State<HomePage> {
                 bgColor: Colors.cyan.shade50,
                 borderColor: Colors.cyan.shade200,
                 title: 'Quản lý / Trưởng phòng (Đội ngũ)',
-                desc: '• Xem danh sách nhân sự & ca làm việc (chỉ xem, không xóa/sửa)\n'
+                desc:
+                    '• Xem danh sách nhân sự & ca làm việc (chỉ xem, không xóa/sửa)\n'
                     '• Xem và duyệt / từ chối đơn nghỉ phép, giải trình của nhân viên\n'
                     '• Xem bảng xếp hạng & thống kê thi đua toàn công ty\n'
                     '• Chấm công bằng GPS + QR + Vân tay như nhân viên',
@@ -1887,7 +2016,8 @@ class _HomePageState extends State<HomePage> {
                 bgColor: Colors.teal.shade50,
                 borderColor: Colors.teal.shade200,
                 title: 'Nhân viên (Tiêu chuẩn)',
-                desc: '• Chấm công vào / ra bằng GPS + QR văn phòng + Vân tay\n'
+                desc:
+                    '• Chấm công vào / ra bằng GPS + QR văn phòng + Vân tay\n'
                     '• Xem ca làm việc được phân công hôm nay\n'
                     '• Tạo đơn xin nghỉ phép, giải trình đi trễ / quên chấm công\n'
                     '• Xem báo cáo giờ công cá nhân & bảng xếp hạng',
@@ -1940,7 +2070,10 @@ class _HomePageState extends State<HomePage> {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
               ),
             ),
           ],
@@ -1982,7 +2115,10 @@ class _HomePageState extends State<HomePage> {
             Expanded(
               child: Text(
                 s.name,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
               ),
             ),
           ],
@@ -1995,7 +2131,10 @@ class _HomePageState extends State<HomePage> {
               Text(
                 'Khung giờ: ${minuteText(s.startMinute)} – ${minuteText(s.endMinute)}'
                 '${s.endMinute < s.startMinute ? ' (Ca qua đêm)' : ''}',
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -2005,11 +2144,18 @@ class _HomePageState extends State<HomePage> {
               const Divider(height: 24),
               Row(
                 children: [
-                  const Icon(Icons.people_outline, size: 18, color: Color(0xFF087F8C)),
+                  const Icon(
+                    Icons.people_outline,
+                    size: 18,
+                    color: Color(0xFF087F8C),
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     'Nhân viên đang phân ca (${assignedEmps.length}):',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ],
               ),
@@ -2019,14 +2165,20 @@ class _HomePageState extends State<HomePage> {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Text(
                     'Chưa có nhân viên nào được phân vào ca này.',
-                    style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 )
               else
                 for (final e in assignedEmps)
                   Container(
                     margin: const EdgeInsets.only(bottom: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF8FAFC),
                       borderRadius: BorderRadius.circular(10),
@@ -2123,7 +2275,9 @@ class _HomePageState extends State<HomePage> {
                     await perform(() => c.deleteShift(s.id));
                   }
                 } else {
-                  final names = assignedEmps.map((e) => '• ${e.name}').join('\n');
+                  final names = assignedEmps
+                      .map((e) => '• ${e.name}')
+                      .join('\n');
                   final ok = await confirm(
                     context,
                     'Ca ${s.name} đang có ${assignedEmps.length} người làm:\n$names\n\nHệ thống sẽ tự động gỡ phân ca và xóa ca này. Bạn có chắc không?',
@@ -2859,6 +3013,7 @@ class _HomePageState extends State<HomePage> {
       const SizedBox(height: 14),
 
       // Card Sinh trắc học
+      FaceSettingsCard(controller: c),
       BiometricSettingsCard(controller: c),
 
       const SizedBox(height: 14),
@@ -2872,205 +3027,20 @@ class _HomePageState extends State<HomePage> {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: () async {
-                  try {
-                    // Hiển thị loading
-                    showDialog(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (_) => const Center(
-                        child: Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CircularProgressIndicator(),
-                                SizedBox(height: 16),
-                                Text('Đang xác định vị trí...'),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-
-                    final p = await acquirePosition();
-                    String address = 'Không thể xác định địa chỉ';
-                    try {
-                      final placemarks = await geo.Geocoding().placemarkFromCoordinates(
-                        p.latitude,
-                        p.longitude,
-                      );
-                      if (placemarks.isNotEmpty) {
-                        final pm = placemarks.first;
-                        final parts = <String>[
-                          if (pm.street != null && pm.street!.isNotEmpty) pm.street!,
-                          if (pm.subLocality != null && pm.subLocality!.isNotEmpty) pm.subLocality!,
-                          if (pm.locality != null && pm.locality!.isNotEmpty) pm.locality!,
-                          if (pm.subAdministrativeArea != null && pm.subAdministrativeArea!.isNotEmpty) pm.subAdministrativeArea!,
-                          if (pm.administrativeArea != null && pm.administrativeArea!.isNotEmpty) pm.administrativeArea!,
-                          if (pm.country != null && pm.country!.isNotEmpty) pm.country!,
-                        ];
-                        address = parts.join(', ');
-                      }
-                    } catch (_) {}
-
-                    if (!mounted) return;
-                    Navigator.pop(context); // Đóng loading
-
-                    final mapsUrl = 'https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}';
-
-                    await showDialog<void>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        title: const Row(
-                          children: [
-                            Icon(Icons.location_on_rounded, color: Color(0xFF087F8C)),
-                            SizedBox(width: 8),
-                            Text('Vị trí của bạn', style: TextStyle(fontSize: 18)),
-                          ],
-                        ),
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Địa chỉ
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE0F2FE),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFF7DD3FC)),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Row(
-                                    children: [
-                                      Icon(Icons.home_rounded, size: 16, color: Color(0xFF0284C7)),
-                                      SizedBox(width: 6),
-                                      Text('Địa chỉ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0284C7))),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  SelectableText(
-                                    address,
-                                    style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            // Toạ độ + Sai số
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF0FDF4),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFF86EFAC)),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.gps_fixed_rounded, size: 16, color: Color(0xFF16A34A)),
-                                      const SizedBox(width: 6),
-                                      const Text('Tọa độ GPS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF16A34A))),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF16A34A).withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          '±${p.accuracy.round()} m',
-                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF16A34A)),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  SelectableText(
-                                    '${p.latitude.toStringAsFixed(6)}, ${p.longitude.toStringAsFixed(6)}',
-                                    style: const TextStyle(fontSize: 14, fontFamily: 'monospace', color: Color(0xFF0F172A)),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            // Nút mở Google Maps
-                            SizedBox(
-                              width: double.infinity,
-                              child: FilledButton.icon(
-                                onPressed: () async {
-                                  final uri = Uri.parse(mapsUrl);
-                                  if (await canLaunchUrl(uri)) {
-                                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                  }
-                                },
-                                icon: const Icon(Icons.map_rounded, size: 18),
-                                label: const Text('Xem trên Google Maps'),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF087F8C),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            // Nút copy toạ độ
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: () {
-                                  Clipboard.setData(ClipboardData(
-                                    text: '${p.latitude}, ${p.longitude}',
-                                  ));
-                                  ScaffoldMessenger.of(ctx).showSnackBar(
-                                    const SnackBar(content: Text('Đã sao chép tọa độ!')),
-                                  );
-                                },
-                                icon: const Icon(Icons.copy_rounded, size: 18),
-                                label: const Text('Sao chép tọa độ'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF087F8C),
-                                  side: const BorderSide(color: Color(0xFF087F8C)),
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Đóng'),
-                          ),
-                        ],
-                      ),
-                    );
-                  } catch (e) {
-                    if (mounted) {
-                      Navigator.of(context, rootNavigator: true).pop();
-                      message(context, e);
-                    }
-                  }
-                },
+                onPressed: locating ? null : _showCurrentLocation,
                 icon: const Icon(Icons.my_location_rounded),
-                label: const Text('Xác định vị trí hiện tại'),
+                label: Text(
+                  locating
+                      ? 'Đang xác định vị trí…'
+                      : 'Xác định vị trí hiện tại',
+                ),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF087F8C),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
               ),
             ),

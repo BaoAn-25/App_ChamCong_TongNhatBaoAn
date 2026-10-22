@@ -212,8 +212,9 @@ class ShiftRepository {
     return Shift.fromJson(res);
   }
 
-  Future<void> delete(String id) async {
-    await client.delete('/api/shifts/$id');
+  Future<void> delete(String id, {bool force = false}) async {
+    final query = force ? {'force': 'true'} : null;
+    await client.delete('/api/shifts/$id', query: query);
   }
 }
 

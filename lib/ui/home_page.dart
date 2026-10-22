@@ -20,7 +20,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int page = 0;
   bool performing = false;
-  String search = '', requestFilter = 'all';
+  String search = '', requestFilter = 'all', roleFilter = 'all';
+  String? deptFilter;
   DateTimeRange? historyRange;
   AppController get c => widget.controller;
   List<Attendance> get records =>
@@ -930,13 +931,25 @@ class _HomePageState extends State<HomePage> {
     ),
   );
   Widget management() {
-    final employees = c.data.employees
-        .where(
-          (e) => '${e.name} ${e.username} ${e.department}'
-              .toLowerCase()
-              .contains(search.toLowerCase()),
-        )
-        .toList();
+    final employees = c.data.employees.where((e) {
+      final matchesSearch = '${e.name} ${e.username} ${e.department}'
+          .toLowerCase()
+          .contains(search.toLowerCase());
+      if (!matchesSearch) return false;
+
+      if (roleFilter == 'admin' && !e.isAdmin) return false;
+      if (roleFilter == 'manager' && !e.isManager) return false;
+      if (roleFilter == 'employee' && (e.isAdmin || e.isManager)) return false;
+      if (roleFilter == 'locked' && e.active) return false;
+
+      if (deptFilter != null &&
+          e.department.toLowerCase() != deptFilter!.toLowerCase()) {
+        return false;
+      }
+
+      return true;
+    }).toList();
+
     return list([
       _pageHint(
         'Quản lý nơi làm việc',
@@ -984,29 +997,123 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       Section(
-        title: 'Nhân viên',
+        title: 'Nhân sự & Người dùng',
         subtitle: c.isAdmin
             ? '${c.data.employees.length} tài khoản trên hệ thống'
             : '${c.data.employees.length} tài khoản • Quản lý chỉ được xem',
-        action: c.isAdmin
-            ? IconButton(
-                tooltip: 'Thêm nhân viên',
+        action: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Xem bảng quyền hạn các vai trò',
+              onPressed: showRolePermissionsInfo,
+              icon: const Icon(Icons.help_outline, color: Color(0xFF087F8C)),
+            ),
+            if (c.isAdmin)
+              IconButton(
+                tooltip: 'Thêm nhân viên mới',
                 onPressed: () => editEmployee(),
                 icon: const Icon(Icons.person_add_alt),
-              )
-            : null,
+              ),
+          ],
+        ),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Ô TÌM KIẾM
             TextField(
-              decoration: const InputDecoration(
-                hintText: 'Tìm tên, tài khoản, phòng ban',
-                prefixIcon: Icon(Icons.search),
+              decoration: InputDecoration(
+                hintText: 'Tìm tên, tài khoản, phòng ban...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: search.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () => setState(() => search = ''),
+                      )
+                    : null,
               ),
               onChanged: (v) => setState(() => search = v),
             ),
             const SizedBox(height: 12),
+
+            // BỘ LỌC VAI TRÒ VÀ BỘ ĐẾM SỐ LƯỢNG
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _filterRoleChip('Tất cả', 'all', c.data.employees.length),
+                  const SizedBox(width: 8),
+                  _filterRoleChip(
+                    'Admin',
+                    'admin',
+                    c.data.employees.where((e) => e.isAdmin).length,
+                    activeColor: Colors.deepPurple,
+                  ),
+                  const SizedBox(width: 8),
+                  _filterRoleChip(
+                    'Quản lý',
+                    'manager',
+                    c.data.employees.where((e) => e.isManager).length,
+                    activeColor: Colors.cyan.shade800,
+                  ),
+                  const SizedBox(width: 8),
+                  _filterRoleChip(
+                    'Nhân viên',
+                    'employee',
+                    c.data.employees.where((e) => !e.isAdmin && !e.isManager).length,
+                    activeColor: Colors.teal.shade800,
+                  ),
+                  if (c.data.employees.any((e) => !e.active)) ...[
+                    const SizedBox(width: 8),
+                    _filterRoleChip(
+                      'Đã khóa',
+                      'locked',
+                      c.data.employees.where((e) => !e.active).length,
+                      activeColor: Colors.red.shade700,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            // BỘ LỌC THEO PHÒNG BAN (NẾU CÓ)
+            if (c.data.departments.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    const Text(
+                      'Phòng ban:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: const Text('Tất cả', style: TextStyle(fontSize: 11)),
+                      selected: deptFilter == null,
+                      onSelected: (_) => setState(() => deptFilter = null),
+                    ),
+                    for (final d in c.data.departments) ...[
+                      const SizedBox(width: 6),
+                      ChoiceChip(
+                        label: Text(d.name, style: const TextStyle(fontSize: 11)),
+                        selected:
+                            deptFilter?.toLowerCase() == d.name.toLowerCase(),
+                        onSelected: (sel) =>
+                            setState(() => deptFilter = sel ? d.name : null),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
             if (employees.isEmpty)
-              const EmptyState('Không có nhân viên phù hợp.'),
+              const EmptyState('Không có nhân viên phù hợp bộ lọc.'),
             for (final e in employees)
               Card(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -1351,6 +1458,158 @@ class _HomePageState extends State<HomePage> {
       );
     },
   );
+
+  Widget _filterRoleChip(
+    String label,
+    String value,
+    int count, {
+    Color? activeColor,
+  }) {
+    final selected = roleFilter == value;
+    final color = activeColor ?? const Color(0xFF087F8C);
+    return FilterChip(
+      selected: selected,
+      showCheckmark: false,
+      avatar: selected
+          ? Icon(Icons.check_circle_rounded, size: 16, color: color)
+          : null,
+      label: Text('$label ($count)'),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+        color: selected ? color : const Color(0xFF475569),
+      ),
+      backgroundColor: const Color(0xFFF1F5F9),
+      selectedColor: color.withValues(alpha: 0.15),
+      side: BorderSide(
+        color: selected ? color : Colors.transparent,
+        width: 1.5,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      onSelected: (_) => setState(() => roleFilter = value),
+    );
+  }
+
+  void showRolePermissionsInfo() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: Color(0xFF087F8C)),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Bảng phân quyền vai trò',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _roleInfoTile(
+                badge: 'ADMIN',
+                color: Colors.deepPurple,
+                title: 'Quản trị viên (Toàn quyền)',
+                desc: '• Quản trị nhân sự: Thêm, sửa, xóa, phân quyền, khóa tài khoản\n'
+                    '• Cấu hình văn phòng: Đặt tọa độ GPS, bán kính, hiển thị QR động\n'
+                    '• Quản lý ca làm việc: Tạo ca mới, sửa giờ, xóa ca, phân ca\n'
+                    '• Quản lý phòng ban: Thêm, sửa, xóa danh mục phòng ban\n'
+                    '• Duyệt đơn từ: Duyệt / từ chối mọi đơn nghỉ phép & giải trình',
+              ),
+              const Divider(height: 24),
+              _roleInfoTile(
+                badge: 'QUẢN LÝ',
+                color: Colors.cyan.shade800,
+                bgColor: Colors.cyan.shade50,
+                borderColor: Colors.cyan.shade200,
+                title: 'Quản lý / Trưởng phòng (Đội ngũ)',
+                desc: '• Xem danh sách nhân sự & ca làm việc (chỉ xem, không xóa/sửa)\n'
+                    '• Xem và duyệt / từ chối đơn nghỉ phép, giải trình của nhân viên\n'
+                    '• Xem bảng xếp hạng & thống kê thi đua toàn công ty\n'
+                    '• Chấm công bằng GPS + QR + Vân tay như nhân viên',
+              ),
+              const Divider(height: 24),
+              _roleInfoTile(
+                badge: 'NHÂN VIÊN',
+                color: Colors.teal.shade800,
+                bgColor: Colors.teal.shade50,
+                borderColor: Colors.teal.shade200,
+                title: 'Nhân viên (Tiêu chuẩn)',
+                desc: '• Chấm công vào / ra bằng GPS + QR văn phòng + Vân tay\n'
+                    '• Xem ca làm việc được phân công hôm nay\n'
+                    '• Tạo đơn xin nghỉ phép, giải trình đi trễ / quên chấm công\n'
+                    '• Xem báo cáo giờ công cá nhân & bảng xếp hạng',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _roleInfoTile({
+    required String badge,
+    required Color color,
+    Color? bgColor,
+    Color? borderColor,
+    required String title,
+    required String desc,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: bgColor ?? color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: borderColor ?? color.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Text(
+                badge,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          desc,
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.45,
+            color: Color(0xFF475569),
+          ),
+        ),
+      ],
+    );
+  }
 
   String minuteText(int m) =>
       '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';

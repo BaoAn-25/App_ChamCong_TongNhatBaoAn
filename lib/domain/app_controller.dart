@@ -364,9 +364,9 @@ class AppController extends ChangeNotifier {
     await syncAll();
   }
 
-  Future<void> deleteShift(String id) async {
+  Future<void> deleteShift(String id, {bool force = false}) async {
     requireAdmin();
-    await shiftRepo.delete(id);
+    await shiftRepo.delete(id, force: force);
     data.shifts.removeWhere((s) => s.id == id);
     await syncAll();
   }

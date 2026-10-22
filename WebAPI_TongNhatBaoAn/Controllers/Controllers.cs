@@ -257,12 +257,21 @@ public class ShiftsController(AppDb db) : ApiBase
     }
 
     [HttpDelete("{id:guid}"), Authorize(Roles = Roles.Admin)]
-    public async Task<IActionResult> Delete(Guid id)
+    public async Task<IActionResult> Delete(Guid id, [FromQuery] bool force = false)
     {
         var s = await db.Shifts.FindAsync(id);
         if (s == null) return Fail("Không tìm thấy ca.", 404);
-        if (await db.Employees.AnyAsync(e => e.ShiftId == id))
-            return Fail("Ca đang được phân công. Bỏ phân công trước khi xóa.", 409);
+        var assigned = await db.Employees.Where(e => e.ShiftId == id).ToListAsync();
+        if (assigned.Count > 0)
+        {
+            if (!force)
+            {
+                var names = string.Join(", ", assigned.Take(3).Select(e => e.Name));
+                var extra = assigned.Count > 3 ? $" và {assigned.Count - 3} người khác" : "";
+                return Fail($"Ca đang được phân công cho {assigned.Count} nhân viên ({names}{extra}). Hãy bỏ phân công trước khi xóa.", 409);
+            }
+            foreach (var e in assigned) e.ShiftId = null;
+        }
         db.Shifts.Remove(s);
         await db.SaveChangesAsync();
         return NoContent();

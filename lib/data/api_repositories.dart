@@ -201,6 +201,25 @@ class EmployeeRepository {
     );
     return Employee.fromJson(res);
   }
+
+  Future<List<Employee>> bulkAssignShift(String shiftId, {bool onlyUnassigned = true}) async {
+    final res = await client.post(
+      '/api/employees/bulk-shift',
+      body: {
+        'shiftId': shiftId,
+        'onlyUnassigned': onlyUnassigned,
+      },
+    ) as List;
+    return res.map((j) => Employee.fromJson(j)).toList();
+  }
+
+  Future<Employee> selectMyShift(String? shiftId) async {
+    final res = await client.put(
+      '/api/me/shift',
+      body: {'shiftId': shiftId},
+    );
+    return Employee.fromJson(res);
+  }
 }
 
 class ShiftRepository {
@@ -336,6 +355,7 @@ class AttendanceRepository {
     required String idempotencyKey,
     bool isMocked = false,
     String? faceProof,
+    String? shiftId,
   }) async {
     final res = await client.post(
       '/api/attendance/check-in',
@@ -348,6 +368,7 @@ class AttendanceRepository {
         'idempotencyKey': idempotencyKey,
         'isMocked': isMocked,
         'faceProof': ?faceProof,
+        'shiftId': ?shiftId,
       },
     );
     return Attendance.fromJson(res);

@@ -1074,19 +1074,57 @@ class _HomePageState extends State<HomePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        myShift?.name ?? 'Chưa được phân ca',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1E293B),
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              myShift?.name ?? 'Chưa bình chọn ca',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF1E293B),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: () => registerMyShiftDialog(),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.how_to_vote_outlined,
+                                    size: 13,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    myShift == null ? 'Bình chọn' : 'Đổi ca',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(
                         myShift != null
                             ? '${minuteText(myShift.startMinute)} – ${minuteText(myShift.endMinute)} (Cho phép trễ ${myShift.grace}p)'
-                            : 'Vui lòng liên hệ Admin để được phân ca làm việc',
+                            : 'Bấm "Bình chọn" để chọn ca làm mong muốn',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF64748B),
@@ -1333,8 +1371,8 @@ class _HomePageState extends State<HomePage> {
         Section(
           title: 'Văn phòng & mã QR',
           subtitle: c.data.office.configured
-              ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m'
-              : 'Chưa cấu hình vị trí chấm công',
+              ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m • Có thể ghim lại GPS chỗ đang đứng'
+              : 'Chưa cấu hình. Bấm Lấy GPS vị trí hiện tại ngay tại chỗ làm.',
           child: Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -1354,7 +1392,7 @@ class _HomePageState extends State<HomePage> {
                   }
                 },
                 icon: const Icon(Icons.my_location),
-                label: const Text('Lấy GPS để thiết lập'),
+                label: const Text('Lấy GPS vị trí hiện tại'),
               ),
               OutlinedButton.icon(
                 onPressed: showOfficeQr,
@@ -1592,8 +1630,42 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ],
                   ),
-                  subtitle: Text(
-                    '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}\n${c.data.shifts.where((s) => s.id == e.shiftId).firstOrNull?.name ?? 'Chưa phân ca'}',
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}',
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.schedule,
+                            size: 13,
+                            color: e.shiftId == null
+                                ? Colors.orange.shade800
+                                : Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            c.data.shifts
+                                    .where((s) => s.id == e.shiftId)
+                                    .firstOrNull
+                                    ?.name ??
+                                'Chưa chọn / phân ca',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: e.shiftId == null
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: e.shiftId == null
+                                  ? Colors.orange.shade800
+                                  : Colors.blue.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                   trailing: !c.isAdmin
                       ? null
@@ -1706,10 +1778,28 @@ class _HomePageState extends State<HomePage> {
         title: 'Ca làm việc',
         subtitle: 'Chạm vào ca để xem danh sách nhân sự đang phân ca',
         action: c.isAdmin
-            ? IconButton(
-                tooltip: 'Thêm ca',
-                onPressed: () => editShift(),
-                icon: const Icon(Icons.add),
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (c.data.employees.any((e) => e.shiftId == null) &&
+                      c.data.shifts.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => bulkAssignShiftDialog(),
+                      icon: const Icon(Icons.flash_on, size: 16),
+                      label: Text(
+                        'Sắp ca nhanh (${c.data.employees.where((e) => e.shiftId == null).length})',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: 'Thêm ca',
+                    onPressed: () => editShift(),
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
               )
             : null,
         child: c.data.shifts.isEmpty
@@ -2486,6 +2576,138 @@ class _HomePageState extends State<HomePage> {
       final copy = Employee.fromJson(e.toJson())
         ..shiftId = selected.isEmpty ? null : selected;
       await perform(() => c.saveEmployee(copy));
+    }
+  }
+
+  Future<void> bulkAssignShiftDialog() async {
+    final unassigned =
+        c.data.employees.where((e) => e.shiftId == null).toList();
+    if (unassigned.isEmpty) {
+      message(context, 'Tất cả nhân sự đều đã có ca làm!');
+      return;
+    }
+    if (c.data.shifts.isEmpty) {
+      message(context, 'Chưa có ca làm nào. Vui lòng tạo ca làm trước.');
+      return;
+    }
+    String? selectedShiftId = c.data.shifts.first.id;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Text('Sắp ca nhanh cho ${unassigned.length} nhân sự'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Hiện tại có ${unassigned.length} nhân sự chưa đăng ký / bình chọn ca làm. Chọn ca bên dưới để gán đồng loạt cho họ:',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedShiftId,
+                decoration: const InputDecoration(
+                  labelText: 'Ca làm gán đồng loạt',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final s in c.data.shifts)
+                    DropdownMenuItem(
+                      value: s.id,
+                      child: Text(
+                        '${s.name} (${minuteText(s.startMinute)} – ${minuteText(s.endMinute)})',
+                      ),
+                    ),
+                ],
+                onChanged: (val) => setDialogState(() => selectedShiftId = val),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Hủy'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.flash_on, size: 18),
+              label: const Text('Gán ca ngay'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true && selectedShiftId != null) {
+      await perform(
+        () => c.bulkAssignShift(selectedShiftId!, onlyUnassigned: true),
+        'Đã gán ca thành công cho ${unassigned.length} nhân sự!',
+      );
+    }
+  }
+
+  Future<void> registerMyShiftDialog() async {
+    if (c.data.shifts.isEmpty) {
+      message(
+        context,
+        'Chưa có ca làm nào trên hệ thống. Vui lòng liên hệ Admin.',
+      );
+      return;
+    }
+    String? selected = c.user?.shiftId ?? c.data.shifts.first.id;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text('Đăng ký / Bình chọn ca làm'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Chọn ca làm bạn mong muốn làm việc. Ca đã chọn sẽ trở thành ca làm chính thức của bạn để điểm danh:',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              for (final s in c.data.shifts)
+                RadioListTile<String>(
+                  value: s.id,
+                  groupValue: selected,
+                  title: Text(
+                    s.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Trễ ${s.grace}p',
+                  ),
+                  onChanged: (val) => setDialogState(() => selected = val),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Xác nhận đăng ký'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok == true && selected != null) {
+      await perform(
+        () => c.registerMyShift(selected),
+        'Đã bình chọn ca làm thành công!',
+      );
     }
   }
 

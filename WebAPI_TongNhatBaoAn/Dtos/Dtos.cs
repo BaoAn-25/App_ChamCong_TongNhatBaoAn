@@ -22,6 +22,7 @@ public record EmployeeCreate(string Name, string Email, string Username, string 
 public record EmployeeUpdate(string? Name, string? Email, string? Username, string? Password,
     string? Department, string? Role, bool? Active);
 public record AssignShift(Guid? ShiftId);
+public record BulkAssignShift(Guid ShiftId, bool OnlyUnassigned = true);
 
 public record ShiftDto(Guid Id, string Name, int StartMinute, int EndMinute, int Grace)
 {
@@ -43,7 +44,8 @@ public record OfficeUpdate(string Name, double Latitude, double Longitude, doubl
 public record QrResponse(string Code, DateTime ExpiresAt);
 
 public record PunchRequest(string Qr, double Latitude, double Longitude, double Accuracy,
-    DateTime CapturedAt, string IdempotencyKey, bool IsMocked = false, Guid? FaceProof = null);
+    DateTime CapturedAt, string IdempotencyKey, bool IsMocked = false, Guid? FaceProof = null,
+    Guid? ShiftId = null);
 
 public record AttendanceDto(Guid Id, Guid EmployeeId, string? EmployeeName, string ShiftName, string WorkDate,
     DateTime CheckIn, DateTime ScheduledEnd, int LateMinutes, double Latitude, double Longitude,

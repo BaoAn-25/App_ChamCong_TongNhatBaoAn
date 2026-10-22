@@ -336,6 +336,24 @@ class AppController extends ChangeNotifier {
     await syncAll();
   }
 
+  Future<void> bulkAssignShift(String shiftId, {bool onlyUnassigned = true}) async {
+    requireAdmin();
+    final updatedList = await employeeRepo.bulkAssignShift(shiftId, onlyUnassigned: onlyUnassigned);
+    for (final updated in updatedList) {
+      final idx = data.employees.indexWhere((e) => e.id == updated.id);
+      if (idx != -1) data.employees[idx] = updated;
+    }
+    await syncAll();
+  }
+
+  Future<void> registerMyShift(String? shiftId) async {
+    final updated = await employeeRepo.selectMyShift(shiftId);
+    _user = updated;
+    final idx = data.employees.indexWhere((e) => e.id == updated.id);
+    if (idx != -1) data.employees[idx] = updated;
+    await syncAll();
+  }
+
   Future<void> updateProfile({
     required String name,
     required String username,
@@ -441,6 +459,7 @@ class AppController extends ChangeNotifier {
     required DateTime capturedAt,
     bool mocked = false,
     String? faceProof,
+    String? shiftId,
   }) async {
     requireUser();
     final open = openAttendance;
@@ -456,6 +475,7 @@ class AppController extends ChangeNotifier {
         idempotencyKey: idempotencyKey,
         isMocked: mocked,
         faceProof: faceProof,
+        shiftId: shiftId,
       );
     } else {
       await attendanceRepo.checkOut(

@@ -136,6 +136,18 @@ public class MeController(AppDb db) : ApiBase
         var emp = await db.Employees.FindAsync(UserId);
         return emp == null || !emp.Active ? Fail("Vui lòng đăng nhập lại.", 401) : Ok(EmployeeDto.From(emp));
     }
+
+    [HttpPut("shift")]
+    public async Task<IActionResult> SelectShift(AssignShift r)
+    {
+        var emp = await db.Employees.FindAsync(UserId);
+        if (emp == null || !emp.Active) return Fail("Vui lòng đăng nhập lại.", 401);
+        if (r.ShiftId != null && !await db.Shifts.AnyAsync(s => s.Id == r.ShiftId))
+            return Fail("Ca làm không tồn tại.");
+        emp.ShiftId = r.ShiftId;
+        await db.SaveChangesAsync();
+        return Ok(EmployeeDto.From(emp));
+    }
 }
 
 [ApiController, Route("api/employees"), Authorize(Roles = Roles.AdminOrManager)]
@@ -221,6 +233,25 @@ public class EmployeesController(AppDb db) : ApiBase
         emp.ShiftId = r.ShiftId;
         await db.SaveChangesAsync();
         return Ok(EmployeeDto.From(emp));
+    }
+
+    [HttpPost("bulk-shift"), Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> BulkAssignShift(BulkAssignShift r)
+    {
+        if (!await db.Shifts.AnyAsync(s => s.Id == r.ShiftId))
+            return Fail("Ca làm không tồn tại.");
+
+        var query = db.Employees.Where(e => e.Active);
+        if (r.OnlyUnassigned)
+            query = query.Where(e => e.ShiftId == null);
+
+        var list = await query.ToListAsync();
+        foreach (var e in list)
+        {
+            e.ShiftId = r.ShiftId;
+        }
+        await db.SaveChangesAsync();
+        return Ok(await db.Employees.OrderBy(e => e.Name).Select(e => EmployeeDto.From(e)).ToListAsync());
     }
 }
 
@@ -431,8 +462,10 @@ public class AttendanceController(AppDb db, QrService qr, FaceAttendancePolicy f
 
         if (await db.Attendance.AnyAsync(a => a.EmployeeId == uid && a.CheckOut == null))
             return Fail("Bạn đang trong ca. Hãy chấm công ra trước.", 409);
-        var shift = emp.ShiftId == null ? null : await db.Shifts.FindAsync(emp.ShiftId);
-        if (shift == null) return Fail("Bạn chưa được phân ca. Liên hệ Admin.", 409);
+        var shift = r.ShiftId != null
+            ? await db.Shifts.FindAsync(r.ShiftId)
+            : emp.ShiftId == null ? null : await db.Shifts.FindAsync(emp.ShiftId);
+        if (shift == null) return Fail("Hãy chọn ca làm còn hiệu lực, hoặc nhờ Admin tạo/phân ca.", 409);
 
         var local = TimeVn.ToLocal(now);
         var overnight = shift.EndMinute < shift.StartMinute;

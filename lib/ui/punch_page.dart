@@ -25,11 +25,21 @@ class _PunchPageState extends State<PunchPage> {
   String? error, result, gpsDetail;
   Position? _freshGps;
   DateTime? _freshGpsAt;
+  String? selectedShiftId;
+  String? scannedQr;
   int step = -1;
   final done = <int>{};
   AppController get c => widget.controller;
+  List<Shift> get shifts {
+    final items = [...c.data.shifts]
+      ..sort((a, b) => a.startMinute.compareTo(b.startMinute));
+    return items;
+  }
+
+  Shift? get assignedShift =>
+      shifts.where((s) => s.id == c.user?.shiftId).firstOrNull;
   Shift? get shift =>
-      c.data.shifts.where((s) => s.id == c.user?.shiftId).firstOrNull;
+      shifts.where((s) => s.id == selectedShiftId).firstOrNull ?? assignedShift;
   List<Attendance> get history =>
       c.data.attendance
           .where(
@@ -63,6 +73,7 @@ class _PunchPageState extends State<PunchPage> {
   @override
   void initState() {
     super.initState();
+    selectedShiftId = c.user?.shiftId;
     c.addListener(_changed);
     _loadFace();
   }
@@ -78,7 +89,9 @@ class _PunchPageState extends State<PunchPage> {
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    selectedShiftId ??= c.user?.shiftId;
+    setState(() {});
   }
 
   Future<void> _loadFace() async {
@@ -159,6 +172,22 @@ class _PunchPageState extends State<PunchPage> {
     return p;
   }
 
+  Future<void> _scanWorkplace() async {
+    if (busy) return;
+    setState(() => error = null);
+    final qr = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const ScannerPage()),
+    );
+    if (!mounted) return;
+    if (qr == null || qr.trim().isEmpty) return;
+    setState(() {
+      scannedQr = qr.trim();
+      done.add(1);
+      step = 1;
+    });
+  }
+
   Future<void> _run() async {
     if (busy) return;
     setState(() {
@@ -191,7 +220,7 @@ class _PunchPageState extends State<PunchPage> {
         return;
       }
       if (shift == null && c.openAttendance == null) {
-        throw StateError('Bạn chưa được phân ca. Vui lòng liên hệ Admin.');
+        throw StateError('Hãy chọn ca làm trước khi chấm công.');
       }
       final checkingOut = c.openAttendance != null;
       final openId = c.openAttendance?.id;
@@ -202,15 +231,18 @@ class _PunchPageState extends State<PunchPage> {
         done.add(0);
         step = 1;
       });
-      // The current API requires QR for every office; no optional-QR flag exists.
-      final qr = await Navigator.push<String>(
-        context,
-        MaterialPageRoute(builder: (_) => const ScannerPage()),
-      );
+      var qr = scannedQr;
+      if (qr == null || qr.isEmpty) {
+        qr = await Navigator.push<String>(
+          context,
+          MaterialPageRoute(builder: (_) => const ScannerPage()),
+        );
+      }
       if (!mounted) return;
       if (qr == null || qr.trim().isEmpty) {
-        throw StateError('Đã hủy quét QR. Thử lại để tiếp tục.');
+        throw StateError('Hãy bấm Quét QR nơi làm việc, rồi chấm công.');
       }
+      scannedQr = qr.trim();
       setState(() {
         done.add(1);
         step = 2;
@@ -255,7 +287,8 @@ class _PunchPageState extends State<PunchPage> {
       reconcile = true;
       final office = c.data.office;
       await c.punch(
-        qr: qr.trim(),
+        qr: scannedQr!.trim(),
+        shiftId: checkingOut ? null : shift?.id,
         faceProof: proof,
         latitude: p.latitude,
         longitude: p.longitude,
@@ -281,6 +314,7 @@ class _PunchPageState extends State<PunchPage> {
           : c.openAttendance;
       setState(() {
         done.add(3);
+        scannedQr = null;
         result = saved == null
             ? 'Đã gửi chấm công. Vui lòng kiểm tra lịch sử.'
             : '${checkingOut ? 'Chấm công ra' : 'Chấm công vào'} thành công • ${_timing(saved, checkingOut)}';
@@ -318,20 +352,36 @@ class _PunchPageState extends State<PunchPage> {
   Widget build(BuildContext context) {
     final a = current;
     final completed = a?.checkOut != null;
+    final inOpenShift = c.openAttendance != null;
     final allowed =
-        (shift != null || c.openAttendance != null) &&
+        (shift != null || inOpenShift) &&
         c.data.office.configured &&
         !completed;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        _ShiftCard(shift: shift, attendance: a),
+        _ShiftPicker(
+          shifts: shifts,
+          assignedId: c.user?.shiftId,
+          selectedId: shift?.id,
+          attendance: a,
+          locked: inOpenShift || busy,
+          onSelect: (id) {
+            if (inOpenShift || busy) return;
+            setState(() {
+              selectedShiftId = id;
+              error = null;
+              result = null;
+            });
+          },
+        ),
         const SizedBox(height: 16),
         Text(
           '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m',
         ),
         if (!c.data.office.configured)
           const Text('Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.'),
+        if (gpsDetail != null) Text(gpsDetail!),
         const SizedBox(height: 8),
         Text(
           enrolled == null
@@ -353,14 +403,45 @@ class _PunchPageState extends State<PunchPage> {
           ),
         ],
         const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: busy ? null : _scanWorkplace,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: Text(
+            scannedQr == null
+                ? 'Quét QR nơi làm việc'
+                : 'Đã quét QR • Quét lại',
+          ),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: busy
+              ? null
+              : () async {
+                  setState(() => error = null);
+                  try {
+                    await _gps(force: true);
+                  } catch (e) {
+                    if (!mounted) return;
+                    setState(
+                      () => error = e.toString().replaceFirst(
+                        RegExp(r'^(Exception: |StateError: |Bad state: )'),
+                        '',
+                      ),
+                    );
+                  }
+                },
+          icon: const Icon(Icons.my_location_outlined),
+          label: const Text('Kiểm tra GPS hiện tại'),
+        ),
+        const SizedBox(height: 16),
         _PunchButton(
           busy: busy,
           label: completed
-              ? 'Đã hoàn tất'
-              : c.openAttendance == null
-              ? 'Chấm công vào'
-              : 'Chấm công ra',
-          onPressed: !busy && allowed && error == null ? _run : null,
+              ? 'Đã hoàn tất ca này'
+              : inOpenShift
+              ? 'Chấm công ra'
+              : 'Chấm công vào ca đã chọn',
+          onPressed: !busy && allowed ? _run : null,
         ),
         const SizedBox(height: 16),
         _StepChecklist(
@@ -415,45 +496,63 @@ class _PunchPageState extends State<PunchPage> {
   }
 }
 
-class _ShiftCard extends StatelessWidget {
-  final Shift? shift;
+class _ShiftPicker extends StatelessWidget {
+  final List<Shift> shifts;
+  final String? assignedId;
+  final String? selectedId;
   final Attendance? attendance;
-  const _ShiftCard({required this.shift, required this.attendance});
+  final bool locked;
+  final ValueChanged<String> onSelect;
+  const _ShiftPicker({
+    required this.shifts,
+    required this.assignedId,
+    required this.selectedId,
+    required this.attendance,
+    required this.locked,
+    required this.onSelect,
+  });
   String _time(int minute) =>
       '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}';
   @override
   Widget build(BuildContext context) => Section(
-    title: 'Ca hôm nay',
+    title: 'Chọn ca làm',
     subtitle: attendance == null
-        ? 'Chưa vào ca'
+        ? 'Bấm vào ca để chọn, rồi quét QR nơi làm việc'
         : attendance!.checkOut == null
-        ? 'Đang trong ca'
-        : 'Đã hoàn tất',
+        ? 'Đang trong ca • hãy quét QR để chấm ra'
+        : 'Ca này đã hoàn tất',
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          attendance?.shiftName ?? shift?.name ?? 'Chưa được phân ca',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        if (shift != null &&
-            (attendance == null || attendance!.shiftName == shift!.name))
-          Text('${_time(shift!.startMinute)} – ${_time(shift!.endMinute)}'),
-        if (attendance != null)
-          Text('Giờ vào thực tế: ${clock(attendance!.checkIn)}'),
-        if (shift == null && attendance == null) ...[
-          const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            items: const [],
-            onChanged: null,
-            decoration: const InputDecoration(
-              labelText: 'Chưa có ca được phân công',
+        if (shifts.isEmpty)
+          const Text(
+            'Admin chưa tạo ca làm. Liên hệ Admin trước khi chấm công.',
+          ),
+        for (final item in shifts)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: item.id == selectedId
+                  ? Theme.of(context).colorScheme.primaryContainer
+                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              child: ListTile(
+                enabled: !locked || item.name == attendance?.shiftName,
+                selected: item.id == selectedId,
+                title: Text(item.name),
+                subtitle: Text(
+                  '${_time(item.startMinute)} – ${_time(item.endMinute)}'
+                  '${item.id == assignedId ? ' • Ca đã chọn / phân' : ''}',
+                ),
+                trailing: item.id == selectedId
+                    ? const Icon(Icons.check_circle)
+                    : const Icon(Icons.radio_button_unchecked),
+                onTap: locked ? null : () => onSelect(item.id),
+              ),
             ),
           ),
-          const Text(
-            'Bạn chưa được phân ca. Liên hệ Admin để được phân ca; chấm công đang khóa.',
-          ),
-        ],
+        if (attendance != null)
+          Text('Giờ vào thực tế: ${clock(attendance!.checkIn)}'),
       ],
     ),
   );

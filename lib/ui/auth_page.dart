@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../data/api_client.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
+import 'biometric_page.dart';
 import 'common.dart';
 
 class AuthPage extends StatefulWidget {
@@ -40,6 +42,64 @@ class _AuthPageState extends State<AuthPage> {
   bool _obscureRegPass = true;
   bool _obscureRegConfirmPass = true;
   String? _error;
+
+  /// Đăng nhập nhanh: sinh trắc học thay thế bước OTP.
+  /// Khôi phục phiên bằng refresh token đã lưu sau khi xác thực thiết bị thành công.
+  Future<void> _handleBiometricLogin() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      if (!await BiometricLoginHelper.isEnabled) {
+        if (mounted) {
+          setState(() {
+            _error =
+                'Bạn chưa bật đăng nhập sinh trắc học. Hãy đăng nhập bằng mật khẩu + OTP, sau đó vào Tài khoản và bấm Kích hoạt sinh trắc học.';
+          });
+        }
+        return;
+      }
+
+      final authed = await BiometricLoginHelper.authenticate();
+      if (!authed) {
+        if (mounted) {
+          setState(() {
+            _error = 'Xác thực sinh trắc học không thành công hoặc đã bị hủy.';
+          });
+        }
+        return;
+      }
+
+      final refresh = await BiometricLoginHelper.getRefreshToken();
+      if (refresh == null) {
+        await BiometricLoginHelper.unenroll();
+        if (mounted) {
+          setState(() {
+            _error =
+                'Không tìm thấy phiên đã lưu. Hãy đăng nhập bằng mật khẩu + OTP rồi bật lại sinh trắc học.';
+          });
+        }
+        return;
+      }
+
+      await widget.controller.loginWithRefreshToken(refresh);
+    } catch (e) {
+      final expired =
+          e is ApiException && (e.statusCode == 400 || e.statusCode == 401);
+      if (expired) await BiometricLoginHelper.unenroll();
+      if (mounted) {
+        setState(() {
+          _error = expired
+              ? 'Phiên sinh trắc học đã hết hạn. Hãy đăng nhập bằng mật khẩu + OTP rồi bật lại sinh trắc học.'
+              : _cleanErrorMessage(e);
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -605,6 +665,21 @@ class _AuthPageState extends State<AuthPage> {
                       Icon(Icons.arrow_forward_rounded, size: 18),
                     ],
                   ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        // NÚT ĐĂNG NHẬP SINH TRẮC HỌC (FACE ID / VÂN TAY) LUÔN HIỂN THỊ
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _handleBiometricLogin,
+          icon: const Icon(Icons.fingerprint_rounded, size: 22),
+          label: const Text('Đăng nhập bằng Face ID / Vân tay'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            foregroundColor: primaryColor,
+            side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
         ),
       ],

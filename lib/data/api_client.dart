@@ -66,6 +66,21 @@ class ApiClient {
     } catch (_) {}
     await _prefs?.setString('jwt_access_token', access);
     await _prefs?.setString('jwt_refresh_token', refresh);
+    try {
+      if (await biometricEnabled) {
+        await _secureStorage.write(key: 'bio_refresh_token', value: refresh);
+      }
+    } catch (_) {}
+  }
+
+  /// Sinh trắc học đang bật: refresh token được đồng bộ sang khóa bio_refresh_token
+  /// để đăng nhập nhanh không cần mật khẩu/OTP.
+  Future<bool> get biometricEnabled async {
+    try {
+      return await _secureStorage.read(key: 'bio_enabled') == 'true';
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> clearTokens() async {

@@ -7,6 +7,8 @@ import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'common.dart';
 import 'punch_page.dart';
+import 'stats_page.dart';
+import 'biometric_page.dart';
 
 class HomePage extends StatefulWidget {
   final AppController controller;
@@ -22,7 +24,7 @@ class _HomePageState extends State<HomePage> {
   AppController get c => widget.controller;
   List<Attendance> get records =>
       c.data.attendance
-          .where((a) => c.isAdmin || a.employeeId == c.user!.id)
+          .where((a) => c.isStaff || a.employeeId == c.user!.id)
           .toList()
         ..sort((a, b) => b.checkIn.compareTo(a.checkIn));
   String employeeName(String id) =>
@@ -44,24 +46,27 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final labels = [
       'Tổng quan',
-      c.isAdmin ? 'Quản lý' : 'Chấm công',
+      c.isStaff ? 'Quản lý' : 'Chấm công',
       'Bảng công',
+      'Thống kê',
       'Đơn từ',
       'Tài khoản',
     ];
     final icons = [
       Icons.space_dashboard_outlined,
-      c.isAdmin ? Icons.manage_accounts_outlined : Icons.fingerprint,
+      c.isStaff ? Icons.manage_accounts_outlined : Icons.fingerprint,
       Icons.calendar_month_outlined,
+      Icons.bar_chart_rounded,
       Icons.assignment_outlined,
       Icons.person_outline,
     ];
     final wide = MediaQuery.sizeOf(context).width >= 900;
     final content = switch (page) {
       0 => dashboard(),
-      1 => c.isAdmin ? management() : PunchPage(controller: c),
+      1 => c.isStaff ? management() : PunchPage(controller: c),
       2 => history(),
-      3 => requests(),
+      3 => StatsPage(controller: c),
+      4 => requests(),
       _ => profile(),
     };
     return Scaffold(
@@ -84,10 +89,20 @@ class _HomePageState extends State<HomePage> {
             padding: const EdgeInsets.only(right: 16),
             child: Chip(
               avatar: Icon(
-                c.isAdmin ? Icons.shield_outlined : Icons.badge_outlined,
+                c.isAdmin
+                    ? Icons.shield_outlined
+                    : c.user?.role == 'manager'
+                        ? Icons.supervisor_account_outlined
+                        : Icons.badge_outlined,
                 size: 17,
               ),
-              label: Text(c.isAdmin ? 'Admin' : 'Nhân viên'),
+              label: Text(
+                c.isAdmin
+                    ? 'Admin'
+                    : c.user?.role == 'manager'
+                        ? 'Quản lý'
+                        : 'Nhân viên',
+              ),
             ),
           ),
         ],
@@ -175,8 +190,65 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  String get _greeting {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Chào buổi sáng ☀️';
+    if (h < 18) return 'Chào buổi chiều 🌤️';
+    return 'Chào buổi tối 🌙';
+  }
+
+  Widget _quickActionItem({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget list(List<Widget> children) =>
       ListView(padding: const EdgeInsets.all(20), children: children);
+
   Widget dashboard() {
     final today = records
         .where((a) => dayKey(a.checkIn) == dayKey(DateTime.now()))
@@ -185,7 +257,7 @@ class _HomePageState extends State<HomePage> {
         .where(
           (r) =>
               r.status == 'pending' &&
-              (c.isAdmin || r.employeeId == c.user!.id),
+              (c.isStaff || r.employeeId == c.user!.id),
         )
         .length;
     final month = records
@@ -195,87 +267,394 @@ class _HomePageState extends State<HomePage> {
               a.checkIn.month == DateTime.now().month,
         )
         .toList();
+
+    // Ca làm hôm nay của nhân viên hiện tại
+    final myShift = c.data.shifts.where((s) => s.id == c.user!.shiftId).firstOrNull;
+    final myTodayRecord = today.where((a) => a.employeeId == c.user!.id).firstOrNull;
+
     return list([
+      // Banner Chào Mừng Hiện Đại
       Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(22),
         margin: const EdgeInsets.only(bottom: 20),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           gradient: const LinearGradient(
-            colors: [Color(0xFF075B68), Color(0xFF119C9B)],
+            colors: [Color(0xFF075B68), Color(0xFF087F8C), Color(0xFF0E7490)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF087F8C).withValues(alpha: 0.25),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              dateLabel(DateTime.now()),
-              style: const TextStyle(color: Colors.white70),
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  child: Text(
+                    c.user!.name.isNotEmpty ? c.user!.name[0].toUpperCase() : 'U',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _greeting,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        c.user!.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: c.isAdmin
+                        ? Colors.amber.withValues(alpha: 0.25)
+                        : c.user?.role == 'manager'
+                            ? Colors.deepPurple.withValues(alpha: 0.25)
+                            : Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: c.isAdmin
+                          ? Colors.amber
+                          : c.user?.role == 'manager'
+                              ? Colors.deepPurple.shade200
+                              : Colors.white54,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        c.isAdmin
+                            ? Icons.shield_rounded
+                            : c.user?.role == 'manager'
+                                ? Icons.supervisor_account_rounded
+                                : Icons.badge_rounded,
+                        size: 14,
+                        color: c.isAdmin
+                            ? Colors.amber
+                            : c.user?.role == 'manager'
+                                ? Colors.deepPurple.shade100
+                                : Colors.white,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        c.isAdmin
+                            ? 'ADMIN'
+                            : c.user?.role == 'manager'
+                                ? 'QUẢN LÝ'
+                                : 'NHÂN VIÊN',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: c.isAdmin
+                              ? Colors.amber
+                              : c.user?.role == 'manager'
+                                  ? Colors.deepPurple.shade100
+                                  : Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Xin chào, ${c.user!.name}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 14),
             Text(
               c.isAdmin
-                  ? 'Quản lý ca làm, đồng hành cùng đội ngũ.'
-                  : 'Ghi nhận thời gian. Chủ động ngày làm việc.',
-              style: const TextStyle(color: Colors.white),
+                  ? 'Bảng điều khiển quản trị: Theo dõi nhân sự, phân quyền, ca làm và duyệt đơn.'
+                  : c.isManager
+                      ? 'Bảng điều khiển quản lý: Theo dõi nhân sự, bảng công, thống kê và duyệt đơn.'
+                      : 'Ghi nhận thời gian và vị trí điểm danh chuẩn xác bằng GPS & mã QR động.',
+              style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
             FilledButton.tonalIcon(
               onPressed: () => setState(() => page = 1),
-              icon: Icon(c.isAdmin ? Icons.tune : Icons.fingerprint),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF075B68),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: Icon(c.isStaff ? Icons.tune_rounded : Icons.fingerprint_rounded),
               label: Text(
-                c.isAdmin ? 'Quản lý nhân sự & văn phòng' : 'Chấm công ngay',
+                c.isAdmin
+                    ? 'Quản lý nhân sự & ca làm'
+                    : c.isManager
+                        ? 'Xem nhân sự & ca làm'
+                        : 'Chấm công ngay (GPS / QR)',
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ],
         ),
       ),
+
+      // Lối tắt tác vụ nhanh (Quick Actions)
+      Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: c.isAdmin
+                ? [
+                    _quickActionItem(
+                      label: 'Thêm nhân viên',
+                      icon: Icons.person_add_alt_1_rounded,
+                      color: const Color(0xFF0284C7),
+                      onTap: () => editEmployee(),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Tạo ca làm',
+                      icon: Icons.more_time_rounded,
+                      color: const Color(0xFF0D9488),
+                      onTap: () => editShift(),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'QR Văn phòng',
+                      icon: Icons.qr_code_2_rounded,
+                      color: const Color(0xFF7C3AED),
+                      onTap: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => OfficeQrDialog(controller: c),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Duyệt đơn ($pending)',
+                      icon: Icons.fact_check_outlined,
+                      color: pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
+                      onTap: () => setState(() => page = 4),
+                    ),
+                  ]
+                : c.isManager
+                ? [
+                    _quickActionItem(
+                      label: 'Duyệt đơn ($pending)',
+                      icon: Icons.fact_check_outlined,
+                      color: pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
+                      onTap: () => setState(() => page = 4),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Thống kê',
+                      icon: Icons.bar_chart_rounded,
+                      color: const Color(0xFF7C3AED),
+                      onTap: () => setState(() => page = 3),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Bảng công',
+                      icon: Icons.calendar_month_rounded,
+                      color: const Color(0xFF0284C7),
+                      onTap: () => setState(() => page = 2),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Nhân sự',
+                      icon: Icons.groups_outlined,
+                      color: const Color(0xFF0D9488),
+                      onTap: () => setState(() => page = 1),
+                    ),
+                  ]
+                : [
+                    _quickActionItem(
+                      label: 'Điểm danh ngay',
+                      icon: Icons.fingerprint_rounded,
+                      color: const Color(0xFF087F8C),
+                      onTap: () => setState(() => page = 1),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Gửi đơn xin phép',
+                      icon: Icons.post_add_rounded,
+                      color: const Color(0xFFEA580C),
+                      onTap: () => setState(() => page = 4),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Thống kê',
+                      icon: Icons.bar_chart_rounded,
+                      color: const Color(0xFF7C3AED),
+                      onTap: () => setState(() => page = 3),
+                    ),
+                    const SizedBox(width: 10),
+                    _quickActionItem(
+                      label: 'Bảng công tháng',
+                      icon: Icons.calendar_month_rounded,
+                      color: const Color(0xFF0284C7),
+                      onTap: () => setState(() => page = 2),
+                    ),
+                  ],
+          ),
+        ),
+      ),
+
+      // Thẻ Thống Kê Chỉ Số Đẹp Mắt
       LayoutBuilder(
         builder: (context, box) => Wrap(
           spacing: 12,
           runSpacing: 12,
           children: [
             metric(
-              c.isAdmin ? 'Nhân viên hoạt động' : 'Ca tháng này',
-              c.isAdmin
-                  ? '${c.data.employees.where((e) => e.active && !e.isAdmin).length}'
+              c.isStaff ? 'Nhân viên hoạt động' : 'Ca tháng này',
+              c.isStaff
+                  ? '${c.data.employees.where((e) => e.active && !e.isStaff).length}'
                   : '${month.length}',
               Icons.groups_outlined,
+              const Color(0xFF6366F1),
               box.maxWidth,
             ),
             metric(
               'Chấm công hôm nay',
               '${today.length}',
-              Icons.today_outlined,
+              Icons.verified_outlined,
+              const Color(0xFF10B981),
               box.maxWidth,
             ),
             metric(
-              'Giờ đã hoàn tất / tháng',
+              'Giờ hoàn tất / tháng',
               month
                   .fold<double>(0, (sum, a) => sum + a.hours)
                   .toStringAsFixed(1),
-              Icons.schedule,
+              Icons.access_time_rounded,
+              const Color(0xFF0284C7),
               box.maxWidth,
             ),
             metric(
               'Đơn chờ duyệt',
               '$pending',
-              Icons.assignment_outlined,
+              Icons.pending_actions_rounded,
+              pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
               box.maxWidth,
             ),
           ],
         ),
       ),
       const SizedBox(height: 20),
+
+      // Thẻ Ca Làm Của Bạn Hôm Nay (Dành riêng cho nhân viên)
+      if (!c.isStaff)
+        Section(
+          title: 'Ca làm của bạn hôm nay',
+          subtitle: dateLabel(DateTime.now()),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF087F8C).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.schedule_rounded,
+                    color: Color(0xFF087F8C),
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        myShift?.name ?? 'Chưa được phân ca',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        myShift != null
+                            ? '${minuteText(myShift.startMinute)} – ${minuteText(myShift.endMinute)} (Cho phép trễ ${myShift.grace}p)'
+                            : 'Vui lòng liên hệ Admin để được phân ca làm việc',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: myTodayRecord == null
+                        ? Colors.amber.shade50
+                        : myTodayRecord.checkOut == null
+                        ? Colors.blue.shade50
+                        : Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: myTodayRecord == null
+                          ? Colors.amber.shade300
+                          : myTodayRecord.checkOut == null
+                          ? Colors.blue.shade300
+                          : Colors.green.shade300,
+                    ),
+                  ),
+                  child: Text(
+                    myTodayRecord == null
+                        ? 'Chưa vào ca'
+                        : myTodayRecord.checkOut == null
+                        ? 'Đang làm'
+                        : 'Đã hoàn tất',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: myTodayRecord == null
+                          ? Colors.amber.shade900
+                          : myTodayRecord.checkOut == null
+                          ? Colors.blue.shade900
+                          : Colors.green.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
       if (c.isAdmin &&
           (!c.data.office.configured ||
               c.data.shifts.isEmpty ||
@@ -317,7 +696,7 @@ class _HomePageState extends State<HomePage> {
                           color: const Color(0xFF087F8C),
                         ),
                         title: Text(
-                          '${c.isAdmin ? '${employeeName(a.employeeId)} • ' : ''}${dateLabel(a.checkIn)}',
+                          '${c.isStaff ? '${employeeName(a.employeeId)} • ' : ''}${dateLabel(a.checkIn)}',
                         ),
                         subtitle: Text(a.explanation),
                       ),
@@ -344,31 +723,56 @@ class _HomePageState extends State<HomePage> {
     ),
     title: Text(title),
   );
-  Widget metric(String title, String value, IconData icon, double width) =>
+
+  Widget metric(String title, String value, IconData icon, Color color, double width) =>
       SizedBox(
         width: width >= 700 ? (width - 36) / 4 : (width - 12) / 2,
-        child: Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, color: const Color(0xFF087F8C)),
-                const SizedBox(height: 12),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                  ),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                Text(
-                  title,
-                  style: const TextStyle(color: Colors.blueGrey, fontSize: 12),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       );
@@ -381,7 +785,7 @@ class _HomePageState extends State<HomePage> {
         style: const TextStyle(color: Color(0xFF087F8C)),
       ),
     ),
-    title: Text(c.isAdmin ? employeeName(a.employeeId) : a.shiftName),
+    title: Text(c.isStaff ? employeeName(a.employeeId) : a.shiftName),
     subtitle: Text(
       '${dateLabel(a.checkIn)} • ${clock(a.checkIn)} → ${clock(a.checkOut)}\n${a.explanation}',
     ),
@@ -417,53 +821,58 @@ class _HomePageState extends State<HomePage> {
         )
         .toList();
     return list([
-      Section(
-        title: 'Văn phòng & mã QR',
-        subtitle: c.data.office.configured
-            ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m'
-            : 'Chưa cấu hình vị trí chấm công',
-        child: Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            FilledButton.icon(
-              onPressed: () => editOffice(),
-              icon: const Icon(Icons.location_on_outlined),
-              label: const Text('Cấu hình văn phòng'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () async {
-                try {
-                  final position = await acquirePosition();
-                  if (mounted) await editOffice(position);
-                } catch (e) {
-                  if (mounted) message(context, e);
-                }
-              },
-              icon: const Icon(Icons.my_location),
-              label: const Text('Lấy GPS để thiết lập'),
-            ),
-            OutlinedButton.icon(
-              onPressed: c.data.office.configured
-                  ? () => showDialog<void>(
-                      context: context,
-                      builder: (_) => OfficeQrDialog(controller: c),
-                    )
-                  : null,
-              icon: const Icon(Icons.qr_code),
-              label: const Text('Hiển thị QR động'),
-            ),
-          ],
+      if (c.isAdmin)
+        Section(
+          title: 'Văn phòng & mã QR',
+          subtitle: c.data.office.configured
+              ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m'
+              : 'Chưa cấu hình vị trí chấm công',
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: () => editOffice(),
+                icon: const Icon(Icons.location_on_outlined),
+                label: const Text('Cấu hình văn phòng'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  try {
+                    final position = await acquirePosition();
+                    if (mounted) await editOffice(position);
+                  } catch (e) {
+                    if (mounted) message(context, e);
+                  }
+                },
+                icon: const Icon(Icons.my_location),
+                label: const Text('Lấy GPS để thiết lập'),
+              ),
+              OutlinedButton.icon(
+                onPressed: c.data.office.configured
+                    ? () => showDialog<void>(
+                        context: context,
+                        builder: (_) => OfficeQrDialog(controller: c),
+                      )
+                    : null,
+                icon: const Icon(Icons.qr_code),
+                label: const Text('Hiển thị QR động'),
+              ),
+            ],
+          ),
         ),
-      ),
       Section(
         title: 'Nhân viên',
-        subtitle: '${c.data.employees.length} tài khoản trên thiết bị',
-        action: IconButton(
-          tooltip: 'Thêm nhân viên',
-          onPressed: () => editEmployee(),
-          icon: const Icon(Icons.person_add_alt),
-        ),
+        subtitle: c.isAdmin
+            ? '${c.data.employees.length} tài khoản trên hệ thống'
+            : '${c.data.employees.length} tài khoản • Quản lý chỉ được xem',
+        action: c.isAdmin
+            ? IconButton(
+                tooltip: 'Thêm nhân viên',
+                onPressed: () => editEmployee(),
+                icon: const Icon(Icons.person_add_alt),
+              )
+            : null,
         child: Column(
           children: [
             TextField(
@@ -477,41 +886,178 @@ class _HomePageState extends State<HomePage> {
             if (employees.isEmpty)
               const EmptyState('Không có nhân viên phù hợp.'),
             for (final e in employees)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  child: Icon(
-                    e.isAdmin ? Icons.shield_outlined : Icons.person_outline,
+              Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: Colors.grey.shade200),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  leading: CircleAvatar(
+                    backgroundColor: e.isAdmin
+                        ? const Color(0xFFEDE9FE)
+                        : e.isManager
+                            ? const Color(0xFFCCFBF1)
+                            : const Color(0xFFE0F2FE),
+                    child: Icon(
+                      e.isAdmin
+                          ? Icons.shield_outlined
+                          : e.isManager
+                              ? Icons.supervisor_account_outlined
+                              : Icons.person_outline,
+                      color: e.isAdmin
+                          ? Colors.deepPurple
+                          : e.isManager
+                              ? Colors.teal
+                              : const Color(0xFF0284C7),
+                    ),
                   ),
-                ),
-                title: Text(e.name),
-                subtitle: Text(
-                  '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}\n${c.data.shifts.where((s) => s.id == e.shiftId).firstOrNull?.name ?? 'Chưa phân ca'}${e.active ? '' : ' • Đã khóa'}',
-                ),
-                trailing: PopupMenuButton<String>(
-                  onSelected: (v) async {
-                    if (v == 'edit') {
-                      editEmployee(e);
-                    }
-                    if (v == 'shift') {
-                      assignShift(e);
-                    }
-                    if (v == 'delete' &&
-                        await confirm(
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          e.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: e.isAdmin
+                              ? Colors.deepPurple.shade50
+                              : e.isManager
+                                  ? Colors.cyan.shade50
+                                  : Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: e.isAdmin
+                                ? Colors.deepPurple.shade200
+                                : e.isManager
+                                    ? Colors.cyan.shade200
+                                    : Colors.teal.shade200,
+                          ),
+                        ),
+                        child: Text(
+                          e.isAdmin
+                              ? 'ADMIN'
+                              : e.isManager
+                                  ? 'QUẢN LÝ'
+                                  : 'NHÂN VIÊN',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: e.isAdmin
+                                ? Colors.deepPurple
+                                : e.isManager
+                                    ? Colors.cyan.shade800
+                                    : Colors.teal.shade800,
+                          ),
+                        ),
+                      ),
+                      if (!e.active) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.shade200),
+                          ),
+                          child: const Text(
+                            'ĐÃ KHÓA',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text(
+                    '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}\n${c.data.shifts.where((s) => s.id == e.shiftId).firstOrNull?.name ?? 'Chưa phân ca'}',
+                  ),
+                  trailing: !c.isAdmin ? null : PopupMenuButton<String>(
+                    onSelected: (v) async {
+                      if (v == 'edit') {
+                        editEmployee(e);
+                      } else if (v == 'role') {
+                        changeRole(e);
+                      } else if (v == 'shift') {
+                        assignShift(e);
+                      } else if (v == 'toggle_lock') {
+                        final copy = Employee.fromJson(e.toJson())..active = !e.active;
+                        await perform(
+                          () => c.saveEmployee(copy),
+                          e.active ? 'Đã khóa tài khoản' : 'Đã mở khóa tài khoản',
+                        );
+                      } else if (v == 'delete') {
+                        final ok = await confirm(
                           context,
                           'Xóa tài khoản ${e.name}? Tài khoản đã có lịch sử chỉ có thể khóa.',
-                        )) {
-                      await perform(() => c.deleteEmployee(e.id));
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: 'edit',
-                      child: Text('Sửa / khóa tài khoản'),
-                    ),
-                    PopupMenuItem(value: 'shift', child: Text('Phân ca')),
-                    PopupMenuItem(value: 'delete', child: Text('Xóa')),
-                  ],
+                        );
+                        if (ok && mounted) {
+                          await perform(() => c.deleteEmployee(e.id));
+                        }
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_outlined, size: 18),
+                            SizedBox(width: 8),
+                            Text('Sửa thông tin'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'role',
+                        child: Row(
+                          children: [
+                            Icon(Icons.admin_panel_settings_outlined, size: 18, color: Colors.deepPurple),
+                            SizedBox(width: 8),
+                            Text('Phân quyền (Admin / Quản lý / NV)'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'shift',
+                        child: Row(
+                          children: [
+                            Icon(Icons.access_time, size: 18),
+                            SizedBox(width: 8),
+                            Text('Phân ca làm việc'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'toggle_lock',
+                        child: Row(
+                          children: [
+                            Icon(e.active ? Icons.lock_outline : Icons.lock_open, size: 18),
+                            SizedBox(width: 8),
+                            Text(e.active ? 'Khóa tài khoản' : 'Mở khóa tài khoản'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text('Xóa tài khoản', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -520,13 +1066,15 @@ class _HomePageState extends State<HomePage> {
       Section(
         title: 'Ca làm việc',
         subtitle: 'Hỗ trợ ca trong ngày và ca qua đêm',
-        action: IconButton(
-          tooltip: 'Thêm ca',
-          onPressed: () => editShift(),
-          icon: const Icon(Icons.add),
-        ),
+        action: c.isAdmin
+            ? IconButton(
+                tooltip: 'Thêm ca',
+                onPressed: () => editShift(),
+                icon: const Icon(Icons.add),
+              )
+            : null,
         child: c.data.shifts.isEmpty
-            ? const EmptyState('Tạo ca rồi phân công cho nhân viên.')
+            ? const EmptyState('Chưa có ca làm nào.')
             : Column(
                 children: c.data.shifts
                     .map(
@@ -537,7 +1085,7 @@ class _HomePageState extends State<HomePage> {
                         subtitle: Text(
                           '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Cho phép trễ ${s.grace} phút${s.endMinute < s.startMinute ? ' • Qua đêm' : ''}',
                         ),
-                        trailing: PopupMenuButton<String>(
+                        trailing: !c.isAdmin ? null : PopupMenuButton<String>(
                           onSelected: (v) async {
                             if (v == 'edit') {
                               editShift(s);
@@ -592,37 +1140,96 @@ class _HomePageState extends State<HomePage> {
       ),
     ),
   );
-  Future<void> editEmployee([Employee? e]) => editForm(
-    context,
-    title: e == null ? 'Thêm nhân viên' : 'Sửa nhân viên',
-    fields: {
-      'Họ tên': e?.name ?? '',
-      'Email': e?.email ?? '',
-      'Tên đăng nhập': e?.username ?? '',
-      'Phòng ban': e?.department ?? '',
-      'Mật khẩu mới (để trống nếu giữ)': '',
-      'Trạng thái (active / locked)': e?.active == false ? 'locked' : 'active',
-    },
-    passwords: {'Mật khẩu mới (để trống nếu giữ)'},
-    save: (v) async {
-      final active = v['Trạng thái (active / locked)'];
-      if (active != 'active' && active != 'locked') {
-        throw ArgumentError('Trạng thái phải là active hoặc locked.');
-      }
-      await c.saveEmployee(
-        Employee(
-          id: e?.id ?? newId(),
-          name: v['Họ tên']!,
-          email: v['Email']!,
-          username: v['Tên đăng nhập']!,
-          department: v['Phòng ban']!,
-          role: e?.role ?? 'employee',
-          active: active == 'active',
-          shiftId: e?.shiftId,
-        ),
-        password: v['Mật khẩu mới (để trống nếu giữ)'],
+  Future<void> changeRole(Employee e) async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Phân quyền tài khoản • ${e.name}'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        children: [
+          ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: e.role == 'employee' ? const Color(0xFF087F8C) : Colors.grey.shade300,
+                width: e.role == 'employee' ? 2 : 1,
+              ),
+            ),
+            tileColor: e.role == 'employee' ? const Color(0xFF087F8C).withValues(alpha: 0.05) : null,
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFFE0F2FE),
+              child: Icon(Icons.person_outline, color: Color(0xFF0284C7)),
+            ),
+            title: const Text('Nhân viên (Employee)', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Chấm công GPS/QR, làm đơn xin nghỉ, xem lịch sử cá nhân.'),
+            trailing: e.role == 'employee' ? const Icon(Icons.check_circle, color: Color(0xFF087F8C)) : null,
+            onTap: () => Navigator.pop(context, 'employee'),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: e.role == 'manager' ? Colors.teal : Colors.grey.shade300,
+                width: e.role == 'manager' ? 2 : 1,
+              ),
+            ),
+            tileColor: e.role == 'manager' ? Colors.teal.withValues(alpha: 0.05) : null,
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFFE6FFFA),
+              child: Icon(Icons.supervisor_account_outlined, color: Colors.teal),
+            ),
+            title: const Text('Quản lý bộ phận (Manager)', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Theo dõi thống kê nhân sự, xem báo cáo, duyệt đơn cấp phòng ban.'),
+            trailing: e.role == 'manager' ? const Icon(Icons.check_circle, color: Colors.teal) : null,
+            onTap: () => Navigator.pop(context, 'manager'),
+          ),
+          const SizedBox(height: 12),
+          ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: e.role == 'admin' ? Colors.deepPurple : Colors.grey.shade300,
+                width: e.role == 'admin' ? 2 : 1,
+              ),
+            ),
+            tileColor: e.role == 'admin' ? Colors.deepPurple.withValues(alpha: 0.05) : null,
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFFEDE9FE),
+              child: Icon(Icons.shield_outlined, color: Colors.deepPurple),
+            ),
+            title: const Text('Quản trị viên (Admin)', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Toàn quyền quản trị nhân sự, ca làm, duyệt đơn từ và cấu hình văn phòng.'),
+            trailing: e.role == 'admin' ? const Icon(Icons.check_circle, color: Colors.deepPurple) : null,
+            onTap: () => Navigator.pop(context, 'admin'),
+          ),
+        ],
+      ),
+    );
+    if (selected != null && selected != e.role) {
+      final copy = Employee.fromJson(e.toJson())..role = selected;
+      final roleTitle = selected == 'admin'
+          ? 'Quản trị viên (Admin)'
+          : selected == 'manager'
+              ? 'Quản lý (Manager)'
+              : 'Nhân viên (Employee)';
+      await perform(
+        () => c.saveEmployee(copy),
+        'Đã cập nhật quyền thành: $roleTitle',
       );
-    },
+    }
+  }
+
+  Future<void> editEmployee([Employee? e]) => showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _EmployeeFormDialog(
+      controller: c,
+      employee: e,
+      onSaved: () {
+        if (mounted) setState(() {});
+      },
+    ),
   );
   Future<void> assignShift(Employee e) async {
     final selected = await showDialog<String>(
@@ -795,7 +1402,7 @@ class _HomePageState extends State<HomePage> {
         c.data.requests
             .where(
               (r) =>
-                  (c.isAdmin || r.employeeId == c.user!.id) &&
+                  (c.isStaff || r.employeeId == c.user!.id) &&
                   (requestFilter == 'all' || r.status == requestFilter),
             )
             .toList()
@@ -880,7 +1487,7 @@ class _HomePageState extends State<HomePage> {
                                 child: const Text('Xóa'),
                               ),
                             ],
-                            if (c.isAdmin && r.employeeId != c.user!.id) ...[
+                            if (c.isStaff && r.employeeId != c.user!.id) ...[
                               TextButton(
                                 onPressed: () => review(r, true),
                                 child: const Text('Duyệt'),
@@ -965,69 +1572,293 @@ class _HomePageState extends State<HomePage> {
     fields: {'Nhận xét': ''},
     save: (v) => c.reviewRequest(r.id, approve, v['Nhận xét']!),
   );
-  Widget profile() => list([
-    Section(
-      title: c.user!.name,
-      subtitle: c.user!.isAdmin ? 'Quản trị viên' : 'Nhân viên',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Tài khoản: ${c.user!.username}'),
-          Text('Email: ${c.user!.email}'),
-          Text(
-            'Phòng ban: ${c.user!.department.isEmpty ? 'Chưa phân công' : c.user!.department}',
-          ),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-            onPressed: () async {
-              if (await confirm(context, 'Đăng xuất khỏi tài khoản này?')) {
-                c.logout();
-              }
-            },
-            icon: const Icon(Icons.logout),
-            label: const Text('Đăng xuất'),
-          ),
-        ],
-      ),
-    ),
-    Section(
-      title: 'Vị trí hiện tại',
-      subtitle: 'Chỉ lấy vị trí khi bạn bấm nút. Không theo dõi nền.',
-      child: FilledButton.tonalIcon(
-        onPressed: () async {
-          try {
-            final p = await acquirePosition();
-            if (!mounted) return;
-            await showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Tọa độ của bạn'),
-                content: SelectableText(
-                  '${p.latitude}, ${p.longitude}\nSai số ±${p.accuracy.round()} m\nCó thể dùng tọa độ này để cấu hình văn phòng khi demo.',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Đóng'),
+  Widget profile() {
+    final roleColor = c.isAdmin
+        ? Colors.amber.shade700
+        : c.user?.role == 'manager'
+            ? Colors.teal
+            : const Color(0xFF0284C7);
+    final roleBg = c.isAdmin
+        ? Colors.amber.shade50
+        : c.user?.role == 'manager'
+            ? Colors.teal.shade50
+            : const Color(0xFFE0F2FE);
+    final roleBorder = c.isAdmin
+        ? Colors.amber.shade300
+        : c.user?.role == 'manager'
+            ? Colors.teal.shade200
+            : const Color(0xFFBAE6FD);
+    final roleName = c.isAdmin
+        ? 'Quản trị viên (Admin)'
+        : c.user?.role == 'manager'
+            ? 'Quản lý (Manager)'
+            : 'Nhân viên (Employee)';
+
+    return list([
+      // Profile Header Card Hiện Đại
+      Container(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 32,
+                  backgroundColor: const Color(0xFF087F8C),
+                  child: Text(
+                    c.user!.name.isNotEmpty ? c.user!.name[0].toUpperCase() : 'U',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ],
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.user!.name,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: roleBg,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: roleBorder),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              c.isAdmin
+                                  ? Icons.shield_rounded
+                                  : c.user?.role == 'manager'
+                                      ? Icons.supervisor_account_rounded
+                                      : Icons.badge_rounded,
+                              size: 14,
+                              color: roleColor,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              roleName,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: roleColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Divider(height: 1, color: Color(0xFFF1F5F9)),
+            const SizedBox(height: 16),
+            // Thông tin chi tiết
+            _profileInfoRow(
+              icon: Icons.account_circle_outlined,
+              label: 'Tên đăng nhập',
+              value: c.user!.username,
+            ),
+            const SizedBox(height: 12),
+            _profileInfoRow(
+              icon: Icons.email_outlined,
+              label: 'Email nhận OTP',
+              value: c.user!.email,
+            ),
+            const SizedBox(height: 12),
+            _profileInfoRow(
+              icon: Icons.corporate_fare_outlined,
+              label: 'Phòng ban',
+              value: c.user!.department.isEmpty ? 'Chưa phân công' : c.user!.department,
+            ),
+          ],
+        ),
+      ),
+
+      const SizedBox(height: 14),
+
+      // Card Sinh trắc học
+      BiometricSettingsCard(controller: c),
+
+      const SizedBox(height: 14),
+
+      // Card Vị trí GPS hiện tại
+      Section(
+        title: 'Vị trí hiện tại',
+        subtitle: 'Chỉ thu thập khi bạn bấm nút để test GPS hoặc chấm công.',
+        child: Column(
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: () async {
+                try {
+                  final p = await acquirePosition();
+                  if (!mounted) return;
+                  await showDialog<void>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Tọa độ của bạn'),
+                      content: SelectableText(
+                        '${p.latitude}, ${p.longitude}\nSai số ±${p.accuracy.round()} m\nCó thể dùng tọa độ này để cấu hình văn phòng khi demo.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Đóng'),
+                        ),
+                      ],
+                    ),
+                  );
+                } catch (e) {
+                  if (mounted) message(context, e);
+                }
+              },
+              icon: const Icon(Icons.my_location),
+              label: const Text('Lấy tọa độ GPS thiết bị'),
+            ),
+          ],
+        ),
+      ),
+
+      const SizedBox(height: 14),
+
+      // Thông tin phiên bản & hệ thống
+      Section(
+        title: 'Hệ thống & Phiên bản',
+        subtitle: 'Nhóm 09 • Tống Nhật Bảo An',
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '• Backend: ASP.NET Core 10 (Render Cloud + Neon PostgreSQL)\n• Xác thực: Mật khẩu + OTP Brevo HTTPS API + Biometric Secure Storage\n• Chấm công: GPS Geofencing + QR Code động mã hóa\n• Thống kê: Báo cáo AI Insights + Biểu đồ fl_chart',
+                style: TextStyle(fontSize: 12, height: 1.6, color: Color(0xFF475569)),
               ),
+            ],
+          ),
+        ),
+      ),
+
+      const SizedBox(height: 20),
+
+      // NÚT ĐĂNG XUẤT ĐẶT DƯỚI CÙNG TÁCH BIỆT RÕ RÀNG
+      Container(
+        width: double.infinity,
+        height: 52,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.red.withValues(alpha: 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: OutlinedButton.icon(
+          onPressed: () async {
+            final ok = await confirm(
+              context,
+              'Bạn có chắc chắn muốn đăng xuất khỏi tài khoản ${c.user!.name}?',
             );
-          } catch (e) {
-            if (mounted) message(context, e);
-          }
-        },
-        icon: const Icon(Icons.my_location),
-        label: const Text('Lấy tọa độ GPS'),
+            if (ok) {
+              c.logout();
+            }
+          },
+          icon: const Icon(Icons.logout_rounded, color: Color(0xFFDC2626), size: 20),
+          label: const Text(
+            'Đăng xuất tài khoản',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFDC2626),
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            backgroundColor: const Color(0xFFFEF2F2),
+            side: const BorderSide(color: Color(0xFFFECACA), width: 1.2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ),
       ),
-    ),
-    const Section(
-      title: 'Về phiên bản này',
-      child: Text(
-        'Flutter / Dart • Nhóm 09\nAppChamCong_TongNhatBaoAn\n\nĐang chạy local, không đồng bộ giữa 4 máy. Email và OTP chỉ mô phỏng. QR đổi mỗi phút, chấp nhận thêm mã của phút trước. GPS và camera QR dùng phần cứng thật. Đăng nhập bằng khuôn mặt chưa được triển khai.\n\nChuyển sang Web API cần xác thực, kiểm tra quyền, thời gian server và kiểm tra QR tại backend. Dữ liệu lưu local chưa phù hợp cho chấm công thực tế.',
-      ),
-    ),
-  ]);
+      const SizedBox(height: 30),
+    ]);
+  }
+
+  Widget _profileInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: const Color(0xFF64748B)),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Color(0xFF94A3B8),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class OfficeQrDialog extends StatefulWidget {
@@ -1100,6 +1931,450 @@ class _OfficeQrDialogState extends State<OfficeQrDialog> {
           child: const Text('Đóng'),
         ),
       ],
+    );
+  }
+}
+
+class _EmployeeFormDialog extends StatefulWidget {
+  final AppController controller;
+  final Employee? employee;
+  final VoidCallback onSaved;
+
+  const _EmployeeFormDialog({
+    required this.controller,
+    this.employee,
+    required this.onSaved,
+  });
+
+  @override
+  State<_EmployeeFormDialog> createState() => _EmployeeFormDialogState();
+}
+
+class _EmployeeFormDialogState extends State<_EmployeeFormDialog> {
+  late final _nameCtrl = TextEditingController(text: widget.employee?.name ?? '');
+  late final _emailCtrl = TextEditingController(text: widget.employee?.email ?? '');
+  late final _usernameCtrl = TextEditingController(text: widget.employee?.username ?? '');
+  late final _deptCtrl = TextEditingController(text: widget.employee?.department ?? '');
+  late final _passwordCtrl = TextEditingController();
+
+  late String _role = widget.employee?.role ?? 'employee';
+  late bool _active = widget.employee?.active ?? true;
+  late String? _shiftId = widget.employee?.shiftId;
+
+  bool _obscurePassword = true;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _usernameCtrl.dispose();
+    _deptCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleSave() async {
+    final name = _nameCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final username = _usernameCtrl.text.trim();
+    final dept = _deptCtrl.text.trim();
+    final password = _passwordCtrl.text;
+
+    if (name.isEmpty || email.isEmpty || username.isEmpty) {
+      setState(() => _error = 'Vui lòng điền họ tên, email và tên đăng nhập.');
+      return;
+    }
+    if (!email.contains('@') || !email.contains('.')) {
+      setState(() => _error = 'Định dạng email không hợp lệ.');
+      return;
+    }
+    if (widget.employee == null && password.length < 8) {
+      setState(() => _error = 'Mật khẩu khởi tạo phải có tối thiểu 8 ký tự.');
+      return;
+    }
+    if (password.isNotEmpty && password.length < 8) {
+      setState(() => _error = 'Mật khẩu mới phải có tối thiểu 8 ký tự.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      final emp = Employee(
+        id: widget.employee?.id ?? newId(),
+        name: name,
+        email: email,
+        username: username,
+        department: dept,
+        role: _role,
+        active: _active,
+        shiftId: _shiftId,
+      );
+
+      await widget.controller.saveEmployee(
+        emp,
+        password: password.isEmpty ? null : password,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onSaved();
+        message(
+          context,
+          widget.employee == null
+              ? 'Đã thêm nhân viên thành công!'
+              : 'Đã cập nhật thông tin nhân viên!',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceFirst(
+            RegExp(r'^(Exception: |StateError: |Bad state: )'),
+            '',
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _minuteText(int m) =>
+      '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final isNew = widget.employee == null;
+
+    return PopScope(
+      canPop: !_busy,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isNew
+                    ? const Color(0xFF087F8C).withValues(alpha: 0.1)
+                    : Colors.deepPurple.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                isNew
+                    ? Icons.person_add_alt_1_rounded
+                    : Icons.manage_accounts_rounded,
+                color: isNew ? const Color(0xFF087F8C) : Colors.deepPurple,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                isNew ? 'Thêm nhân viên mới' : 'Chỉnh sửa nhân viên',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_error != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFFECACA)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          size: 18,
+                          color: Color(0xFFDC2626),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFB91C1C),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+
+                // Họ và tên
+                TextField(
+                  controller: _nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Họ và tên nhân viên *',
+                    hintText: 'Ví dụ: Nguyễn Văn An',
+                    prefixIcon: Icon(Icons.badge_outlined),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Email
+                TextField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Địa chỉ Email *',
+                    hintText: 'Ví dụ: an.nguyen@gmail.com',
+                    prefixIcon: Icon(Icons.email_outlined),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Tên đăng nhập
+                TextField(
+                  controller: _usernameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Tên đăng nhập *',
+                    hintText: 'Ví dụ: an_nv25',
+                    prefixIcon: Icon(Icons.account_circle_outlined),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Phòng ban
+                TextField(
+                  controller: _deptCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Phòng ban',
+                    hintText: 'Ví dụ: Kỹ thuật, Nhân sự, Kinh doanh...',
+                    prefixIcon: Icon(Icons.corporate_fare_outlined),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // DROP LIST 1: VAI TRÒ (ROLE)
+                DropdownButtonFormField<String>(
+                  initialValue: _role,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Vai trò tài khoản *',
+                    prefixIcon: Icon(
+                      _role == 'admin'
+                          ? Icons.shield_outlined
+                          : Icons.person_outline,
+                      color: _role == 'admin'
+                          ? Colors.deepPurple
+                          : const Color(0xFF087F8C),
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'employee',
+                      child: Text(
+                        'Nhân viên (Employee)',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 'manager',
+                      child: Text(
+                        'Quản lý (Manager)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.teal,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 'admin',
+                      child: Text(
+                        'Quản trị viên (Admin)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.deepPurple,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setState(() => _role = val);
+                  },
+                ),
+                const SizedBox(height: 14),
+
+                // DROP LIST 2: TRẠNG THÁI (STATUS)
+                DropdownButtonFormField<bool>(
+                  initialValue: _active,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Trạng thái hoạt động *',
+                    prefixIcon: Icon(
+                      _active
+                          ? Icons.check_circle_outline
+                          : Icons.lock_outline,
+                      color: _active
+                          ? const Color(0xFF10B981)
+                          : const Color(0xFFEF4444),
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: true,
+                      child: Text(
+                        'Đang hoạt động (Active)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF065F46),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: false,
+                      child: Text(
+                        'Đang bị khóa (Locked)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF991B1B),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setState(() => _active = val);
+                  },
+                ),
+                const SizedBox(height: 14),
+
+                // DROP LIST 3: PHÂN CA LÀM VIỆC (SHIFT)
+                DropdownButtonFormField<String?>(
+                  initialValue: _shiftId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Ca làm việc phân công',
+                    prefixIcon: Icon(Icons.schedule_outlined),
+                    filled: true,
+                    fillColor: Color(0xFFF8FAFC),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text(
+                        'Chưa phân ca',
+                        style: TextStyle(color: Color(0xFF64748B)),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    for (final s in widget.controller.data.shifts)
+                      DropdownMenuItem<String?>(
+                        value: s.id,
+                        child: Text(
+                          '${s.name} (${_minuteText(s.startMinute)} – ${_minuteText(s.endMinute)})',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (val) => setState(() => _shiftId = val),
+                ),
+                const SizedBox(height: 14),
+
+                // Mật khẩu
+                TextField(
+                  controller: _passwordCtrl,
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: isNew
+                        ? 'Mật khẩu khởi tạo * (tối thiểu 8 ký tự)'
+                        : 'Mật khẩu mới (để trống nếu giữ nguyên)',
+                    hintText: isNew
+                        ? 'Nhập mật khẩu cho nhân viên'
+                        : 'Chỉ nhập khi muốn đổi mật khẩu',
+                    prefixIcon: const Icon(Icons.lock_outline_rounded),
+                    suffixIcon: IconButton(
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        color: const Color(0xFF94A3B8),
+                      ),
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('Hủy bỏ'),
+          ),
+          FilledButton.icon(
+            onPressed: _busy ? null : _handleSave,
+            icon: _busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.check_rounded, size: 18),
+            label: Text(isNew ? 'Thêm nhân viên' : 'Lưu thay đổi'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF087F8C),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

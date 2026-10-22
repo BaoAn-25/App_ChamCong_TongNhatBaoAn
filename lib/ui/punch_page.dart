@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'package:share_plus/share_plus.dart';
 import '../domain/app_controller.dart';
+import 'biometric_page.dart';
 import 'common.dart';
 import 'home_page.dart' show acquirePosition;
 
@@ -54,7 +55,7 @@ class _PunchPageState extends State<PunchPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('1. Lấy GPS mới  →  2. Quét QR  →  3. Xác nhận'),
+              const Text('1. Lấy GPS  →  2. Quét QR  →  3. Vân tay  →  4. Xác nhận'),
               const SizedBox(height: 20),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -161,6 +162,15 @@ class _PunchPageState extends State<PunchPage> {
                     busy || position == null || qr == null || !office.configured
                     ? null
                     : () => run(() async {
+                        // Bước 3: Xác thực sinh trắc học (vân tay / Face ID)
+                        final authed = await BiometricLoginHelper.authenticate();
+                        if (!authed) {
+                          throw Exception(
+                            'Xác thực sinh trắc học thất bại. '
+                            'Vui lòng thử lại để xác nhận chấm công.',
+                          );
+                        }
+
                         final checkingOut = c.openAttendance != null;
                         await c.punch(
                           qr: qr!,

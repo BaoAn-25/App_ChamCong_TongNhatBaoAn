@@ -34,6 +34,8 @@ class Employee {
   });
 
   bool get isAdmin => role == 'admin';
+  bool get isManager => role == 'manager';
+  bool get isStaff => isAdmin || isManager;
 
   Json toJson() => {
     'id': id,

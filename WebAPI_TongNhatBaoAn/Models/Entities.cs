@@ -18,7 +18,10 @@ public class Employee
 public static class Roles
 {
     public const string Admin = "admin";
+    public const string Manager = "manager";
     public const string Employee = "employee";
+    public const string AdminOrManager = Admin + "," + Manager;
+    public static bool IsValid(string role) => role is Admin or Manager or Employee;
 }
 
 public class Shift

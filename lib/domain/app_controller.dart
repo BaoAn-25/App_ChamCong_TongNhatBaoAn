@@ -104,6 +104,8 @@ class AppController extends ChangeNotifier {
 
   Employee? get user => _user;
   bool get isAdmin => _user?.isAdmin ?? false;
+  bool get isManager => _user?.isManager ?? false;
+  bool get isStaff => _user?.isStaff ?? false;
 
   Attendance? get openAttendance => data.attendance
       .where((a) => a.employeeId == _user?.id && a.checkOut == null)
@@ -130,6 +132,10 @@ class AppController extends ChangeNotifier {
     if (!isAdmin) throw StateError('Chỉ quản trị viên được thực hiện.');
   }
 
+  void requireStaff() {
+    if (!isStaff) throw StateError('Chỉ quản trị viên hoặc quản lý được thực hiện.');
+  }
+
   Employee requireUser() {
     final u = _user;
     if (u == null || !u.active) throw StateError('Vui lòng đăng nhập lại.');
@@ -146,7 +152,7 @@ class AppController extends ChangeNotifier {
       final requestsFuture = requestRepo.list().catchError(
         (_) => data.requests,
       );
-      final employeesFuture = isAdmin
+      final employeesFuture = isStaff
           ? employeeRepo.list().catchError((_) => data.employees)
           : Future.value([?_user]);
 
@@ -221,6 +227,15 @@ class AppController extends ChangeNotifier {
     pendingUsername = null;
     pendingEmail = null;
     demoOtp = null;
+    await syncAll();
+    notifyListeners();
+  }
+
+  /// Đăng nhập nhanh bằng sinh trắc học: bỏ qua mật khẩu + OTP.
+  Future<void> loginWithRefreshToken(String refreshToken) async {
+    _user = await auth.restoreSession(refreshToken);
+    pendingChallengeId = null;
+    pendingAction = null;
     await syncAll();
     notifyListeners();
   }
@@ -408,7 +423,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> reviewRequest(String id, bool approve, String note) async {
-    requireAdmin();
+    requireStaff();
     final req = data.requests.where((r) => r.id == id).firstOrNull;
     final updated = await requestRepo.review(
       id: id,

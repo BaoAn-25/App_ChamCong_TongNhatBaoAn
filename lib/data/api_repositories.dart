@@ -63,9 +63,25 @@ class AuthService {
     return Employee.fromJson(res['user']);
   }
 
+  /// Khôi phục phiên đăng nhập từ refresh token đã lưu (sau khi xác thực sinh trắc học).
+  Future<Employee> restoreSession(String refreshToken) async {
+    final res = await client.post(
+      '/api/auth/refresh',
+      auth: false,
+      body: {'refreshToken': refreshToken},
+    );
+    await client.setTokens(
+      access: res['accessToken'],
+      refresh: res['refreshToken'],
+    );
+    final me = await client.get('/api/me');
+    return Employee.fromJson(me);
+  }
+
   Future<void> logout() async {
     try {
-      if (client.refreshToken != null) {
+      // Sinh trắc học đang bật: giữ refresh token hợp lệ trên server để đăng nhập nhanh lần sau.
+      if (client.refreshToken != null && !await client.biometricEnabled) {
         await client.post(
           '/api/auth/logout',
           auth: false,

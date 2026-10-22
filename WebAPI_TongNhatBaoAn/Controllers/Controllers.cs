@@ -138,20 +138,20 @@ public class MeController(AppDb db) : ApiBase
     }
 }
 
-[ApiController, Route("api/employees"), Authorize(Roles = Roles.Admin)]
+[ApiController, Route("api/employees"), Authorize(Roles = Roles.AdminOrManager)]
 public class EmployeesController(AppDb db) : ApiBase
 {
     [HttpGet]
     public async Task<IActionResult> List() =>
         Ok(await db.Employees.OrderBy(e => e.Name).Select(e => EmployeeDto.From(e)).ToListAsync());
 
-    [HttpPost]
+    [HttpPost, Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Create(EmployeeCreate r)
     {
         var err = Validators.Employee(r.Name, r.Username, r.Email, r.Password ?? "");
         if (err != null) return Fail(err);
         var role = (r.Role ?? Roles.Employee).ToLowerInvariant();
-        if (role is not (Roles.Admin or Roles.Employee)) return Fail("Vai trò không hợp lệ.");
+        if (!Roles.IsValid(role)) return Fail("Vai trò không hợp lệ.");
         if (r.ShiftId != null && !await db.Shifts.AnyAsync(s => s.Id == r.ShiftId)) return Fail("Ca làm không tồn tại.");
         var username = r.Username.Trim().ToLowerInvariant();
         var email = r.Email.Trim().ToLowerInvariant();
@@ -170,7 +170,7 @@ public class EmployeesController(AppDb db) : ApiBase
         return Created($"/api/employees/{emp.Id}", EmployeeDto.From(emp));
     }
 
-    [HttpPatch("{id:guid}")]
+    [HttpPatch("{id:guid}"), Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Update(Guid id, EmployeeUpdate r)
     {
         var emp = await db.Employees.FindAsync(id);
@@ -181,7 +181,7 @@ public class EmployeesController(AppDb db) : ApiBase
         var err = Validators.Employee(name, username, email, string.IsNullOrEmpty(r.Password) ? null : r.Password);
         if (err != null) return Fail(err);
         var role = (r.Role ?? emp.Role).ToLowerInvariant();
-        if (role is not (Roles.Admin or Roles.Employee)) return Fail("Vai trò không hợp lệ.");
+        if (!Roles.IsValid(role)) return Fail("Vai trò không hợp lệ.");
         var active = r.Active ?? emp.Active;
         if (id == UserId && (!active || role != Roles.Admin)) return Fail("Không được khóa hoặc hạ quyền chính mình.", 409);
         if (await db.Employees.AnyAsync(e => e.Id != id && (e.Username == username || e.Email == email)))
@@ -195,7 +195,7 @@ public class EmployeesController(AppDb db) : ApiBase
         return Ok(EmployeeDto.From(emp));
     }
 
-    [HttpDelete("{id:guid}")]
+    [HttpDelete("{id:guid}"), Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Delete(Guid id)
     {
         if (id == UserId) return Fail("Không thể xóa tài khoản đang đăng nhập.", 409);
@@ -208,7 +208,7 @@ public class EmployeesController(AppDb db) : ApiBase
         return NoContent();
     }
 
-    [HttpPut("{id:guid}/shift")]
+    [HttpPut("{id:guid}/shift"), Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> AssignShift(Guid id, AssignShift r)
     {
         var emp = await db.Employees.FindAsync(id);
@@ -412,8 +412,8 @@ public class AttendanceController(AppDb db, QrService qr) : ApiBase
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
-        var isAdmin = User.IsInRole(Roles.Admin);
-        var scope = isAdmin ? employeeId : UserId;
+        var isStaff = User.IsInRole(Roles.Admin) || User.IsInRole(Roles.Manager);
+        var scope = isStaff ? employeeId : UserId;
 
         var q = db.Attendance.AsQueryable();
         if (scope != null) q = q.Where(a => a.EmployeeId == scope);
@@ -442,7 +442,7 @@ public class RequestsController(AppDb db) : ApiBase
     public async Task<IActionResult> List(string? status)
     {
         var q = db.WorkRequests.AsQueryable();
-        if (!User.IsInRole(Roles.Admin)) q = q.Where(r => r.EmployeeId == UserId);
+        if (!User.IsInRole(Roles.Admin) && !User.IsInRole(Roles.Manager)) q = q.Where(r => r.EmployeeId == UserId);
         if (!string.IsNullOrEmpty(status)) q = q.Where(r => r.Status == status);
         var rows = await q.OrderByDescending(r => r.CreatedAt)
             .Join(db.Employees, r => r.EmployeeId, e => e.Id, (r, e) => new { r, e.Name }).ToListAsync();
@@ -497,7 +497,7 @@ public class RequestsController(AppDb db) : ApiBase
         return NoContent();
     }
 
-    [HttpPost("{id:guid}/review"), Authorize(Roles = Roles.Admin)]
+    [HttpPost("{id:guid}/review"), Authorize(Roles = Roles.AdminOrManager)]
     public async Task<IActionResult> Review(Guid id, ReviewRequest r)
     {
         if (string.IsNullOrWhiteSpace(r.Note)) return Fail("Nhập nhận xét khi duyệt hoặc từ chối.");

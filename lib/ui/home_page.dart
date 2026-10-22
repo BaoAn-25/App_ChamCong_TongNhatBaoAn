@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'common.dart';
@@ -2861,38 +2863,216 @@ class _HomePageState extends State<HomePage> {
 
       const SizedBox(height: 14),
 
-      // Card Vị trí GPS hiện tại
+      // Card Vị trí GPS hiện tại — cải tiến hiển thị địa chỉ chi tiết
       Section(
-        title: 'Vị trí hiện tại',
-        subtitle: 'Chỉ thu thập khi bạn bấm nút để test GPS hoặc chấm công.',
+        title: '📍 Vị trí hiện tại',
+        subtitle: 'Xác định vị trí GPS chính xác — hiển thị địa chỉ thực tế.',
         child: Column(
           children: [
-            FilledButton.tonalIcon(
-              onPressed: () async {
-                try {
-                  final p = await acquirePosition();
-                  if (!mounted) return;
-                  await showDialog<void>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Tọa độ của bạn'),
-                      content: SelectableText(
-                        '${p.latitude}, ${p.longitude}\nSai số ±${p.accuracy.round()} m\nCó thể dùng tọa độ này để cấu hình văn phòng khi demo.',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Đóng'),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () async {
+                  try {
+                    // Hiển thị loading
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const Center(
+                        child: Card(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 16),
+                                Text('Đang xác định vị trí...'),
+                              ],
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
-                  );
-                } catch (e) {
-                  if (mounted) message(context, e);
-                }
-              },
-              icon: const Icon(Icons.my_location),
-              label: const Text('Lấy tọa độ GPS thiết bị'),
+                      ),
+                    );
+
+                    final p = await acquirePosition();
+                    String address = 'Không thể xác định địa chỉ';
+                    try {
+                      final placemarks = await geo.Geocoding().placemarkFromCoordinates(
+                        p.latitude,
+                        p.longitude,
+                      );
+                      if (placemarks.isNotEmpty) {
+                        final pm = placemarks.first;
+                        final parts = <String>[
+                          if (pm.street != null && pm.street!.isNotEmpty) pm.street!,
+                          if (pm.subLocality != null && pm.subLocality!.isNotEmpty) pm.subLocality!,
+                          if (pm.locality != null && pm.locality!.isNotEmpty) pm.locality!,
+                          if (pm.subAdministrativeArea != null && pm.subAdministrativeArea!.isNotEmpty) pm.subAdministrativeArea!,
+                          if (pm.administrativeArea != null && pm.administrativeArea!.isNotEmpty) pm.administrativeArea!,
+                          if (pm.country != null && pm.country!.isNotEmpty) pm.country!,
+                        ];
+                        address = parts.join(', ');
+                      }
+                    } catch (_) {}
+
+                    if (!mounted) return;
+                    Navigator.pop(context); // Đóng loading
+
+                    final mapsUrl = 'https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}';
+
+                    await showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        title: const Row(
+                          children: [
+                            Icon(Icons.location_on_rounded, color: Color(0xFF087F8C)),
+                            SizedBox(width: 8),
+                            Text('Vị trí của bạn', style: TextStyle(fontSize: 18)),
+                          ],
+                        ),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Địa chỉ
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE0F2FE),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF7DD3FC)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Row(
+                                    children: [
+                                      Icon(Icons.home_rounded, size: 16, color: Color(0xFF0284C7)),
+                                      SizedBox(width: 6),
+                                      Text('Địa chỉ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0284C7))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  SelectableText(
+                                    address,
+                                    style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Toạ độ + Sai số
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF0FDF4),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF86EFAC)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.gps_fixed_rounded, size: 16, color: Color(0xFF16A34A)),
+                                      const SizedBox(width: 6),
+                                      const Text('Tọa độ GPS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF16A34A))),
+                                      const Spacer(),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF16A34A).withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          '±${p.accuracy.round()} m',
+                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF16A34A)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  SelectableText(
+                                    '${p.latitude.toStringAsFixed(6)}, ${p.longitude.toStringAsFixed(6)}',
+                                    style: const TextStyle(fontSize: 14, fontFamily: 'monospace', color: Color(0xFF0F172A)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            // Nút mở Google Maps
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: () async {
+                                  final uri = Uri.parse(mapsUrl);
+                                  if (await canLaunchUrl(uri)) {
+                                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                  }
+                                },
+                                icon: const Icon(Icons.map_rounded, size: 18),
+                                label: const Text('Xem trên Google Maps'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF087F8C),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Nút copy toạ độ
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  Clipboard.setData(ClipboardData(
+                                    text: '${p.latitude}, ${p.longitude}',
+                                  ));
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(content: Text('Đã sao chép tọa độ!')),
+                                  );
+                                },
+                                icon: const Icon(Icons.copy_rounded, size: 18),
+                                label: const Text('Sao chép tọa độ'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF087F8C),
+                                  side: const BorderSide(color: Color(0xFF087F8C)),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Đóng'),
+                          ),
+                        ],
+                      ),
+                    );
+                  } catch (e) {
+                    if (mounted) {
+                      Navigator.of(context, rootNavigator: true).pop();
+                      message(context, e);
+                    }
+                  }
+                },
+                icon: const Icon(Icons.my_location_rounded),
+                label: const Text('Xác định vị trí hiện tại'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF087F8C),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
             ),
           ],
         ),

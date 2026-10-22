@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../domain/app_controller.dart';
 import 'biometric_page.dart';
 import 'common.dart';
@@ -21,6 +23,7 @@ class _PunchPageState extends State<PunchPage> {
   String? qr;
   bool busy = false;
   String? error;
+  String? _addressText;
   Future<void> run(Future<void> Function() fn) async {
     if (busy) return;
     setState(() {
@@ -78,56 +81,198 @@ class _PunchPageState extends State<PunchPage> {
                   ),
                 ),
               const SizedBox(height: 20),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  position == null
-                      ? Icons.location_searching
-                      : Icons.location_on,
-                  color: const Color(0xFF087F8C),
+              // --- HIỂN THỊ VỊ TRÍ CHI TIẾT ---
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: position == null
+                      ? const Color(0xFFF8FAFC)
+                      : const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: position == null
+                        ? const Color(0xFFE2E8F0)
+                        : const Color(0xFF86EFAC),
+                  ),
                 ),
-                title: Text(
-                  position == null
-                      ? 'Chưa lấy vị trí'
-                      : '${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}',
-                ),
-                subtitle: Text(
-                  position == null
-                      ? 'Chỉ thu thập khi bạn chủ động chấm công.'
-                      : 'Sai số ±${position!.accuracy.round()} m${distance == null ? '' : ' • Cách văn phòng ${distance.round()} m'}',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          position == null
+                              ? Icons.location_searching_rounded
+                              : Icons.location_on_rounded,
+                          color: position == null
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFF16A34A),
+                          size: 22,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            position == null
+                                ? 'Chưa lấy vị trí'
+                                : 'Đã xác định vị trí',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: position == null
+                                  ? const Color(0xFF64748B)
+                                  : const Color(0xFF065F46),
+                            ),
+                          ),
+                        ),
+                        if (position != null && distance != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: distance <= office.radius
+                                  ? const Color(0xFF16A34A).withValues(alpha: 0.1)
+                                  : Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              'Cách VP ${distance.round()} m',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: distance <= office.radius
+                                    ? const Color(0xFF16A34A)
+                                    : Colors.red.shade700,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (position != null) ...[
+                      const SizedBox(height: 8),
+                      // Địa chỉ
+                      if (_addressText != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.home_rounded, size: 14, color: Color(0xFF0284C7)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _addressText!,
+                                  style: const TextStyle(fontSize: 13, color: Color(0xFF334155)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Row(
+                        children: [
+                          const Icon(Icons.gps_fixed_rounded, size: 14, color: Color(0xFF64748B)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '${position!.latitude.toStringAsFixed(6)}, ${position!.longitude.toStringAsFixed(6)}  •  ±${position!.accuracy.round()} m',
+                              style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Color(0xFF64748B)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Chỉ thu thập khi bạn chủ động chấm công.',
+                          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                        ),
+                      ),
+                  ],
                 ),
               ),
+              const SizedBox(height: 10),
               OutlinedButton.icon(
                 onPressed: busy
                     ? null
                     : () => run(() async {
                         final p = await acquirePosition();
+                        // Reverse geocode để lấy địa chỉ
+                        String? addr;
+                        try {
+                          final placemarks = await geo.Geocoding().placemarkFromCoordinates(
+                            p.latitude,
+                            p.longitude,
+                          );
+                          if (placemarks.isNotEmpty) {
+                            final pm = placemarks.first;
+                            final parts = <String>[
+                              if (pm.street != null && pm.street!.isNotEmpty) pm.street!,
+                              if (pm.subLocality != null && pm.subLocality!.isNotEmpty) pm.subLocality!,
+                              if (pm.locality != null && pm.locality!.isNotEmpty) pm.locality!,
+                              if (pm.subAdministrativeArea != null && pm.subAdministrativeArea!.isNotEmpty) pm.subAdministrativeArea!,
+                              if (pm.administrativeArea != null && pm.administrativeArea!.isNotEmpty) pm.administrativeArea!,
+                            ];
+                            addr = parts.join(', ');
+                          }
+                        } catch (_) {}
                         if (mounted) {
                           setState(() {
                             position = p;
                             capturedAt = p.timestamp;
+                            _addressText = addr;
                           });
                         }
                       }),
-                icon: const Icon(Icons.my_location),
+                icon: const Icon(Icons.my_location_rounded),
                 label: const Text('Lấy / cập nhật vị trí'),
-              ),
-              if (position != null)
-                TextButton.icon(
-                  onPressed: busy
-                      ? null
-                      : () => run(() async {
-                          final p = position!;
-                          await SharePlus.instance.share(
-                            ShareParams(
-                              text:
-                                  'Vị trí tôi chia sẻ lúc ${capturedAt!.toLocal()}: https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}\nSai số GPS ±${p.accuracy.round()} m.',
-                            ),
-                          );
-                        }),
-                  icon: const Icon(Icons.share_outlined),
-                  label: const Text('Chia sẻ vị trí qua ứng dụng khác'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF087F8C),
+                  side: const BorderSide(color: Color(0xFF087F8C)),
                 ),
+              ),
+              if (position != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: busy
+                            ? null
+                            : () => run(() async {
+                                final p = position!;
+                                final shareText =
+                                    '📍 Vị trí chấm công lúc ${capturedAt!.toLocal().toString().substring(0, 19)}\n'
+                                    '${_addressText != null ? '🏠 $_addressText\n' : ''}'
+                                    '📌 Tọa độ: ${p.latitude.toStringAsFixed(6)}, ${p.longitude.toStringAsFixed(6)}\n'
+                                    '🎯 Sai số: ±${p.accuracy.round()} m\n'
+                                    '🗺️ https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}';
+                                await SharePlus.instance.share(
+                                  ShareParams(text: shareText),
+                                );
+                              }),
+                        icon: const Icon(Icons.share_rounded, size: 18),
+                        label: const Text('Chia sẻ', style: TextStyle(fontSize: 13)),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          final uri = Uri.parse(
+                            'https://www.google.com/maps/search/?api=1&query=${position!.latitude},${position!.longitude}',
+                          );
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          }
+                        },
+                        icon: const Icon(Icons.map_rounded, size: 18),
+                        label: const Text('Google Maps', style: TextStyle(fontSize: 13)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const Divider(height: 30),
               ListTile(
                 contentPadding: EdgeInsets.zero,

@@ -154,8 +154,16 @@ class Attendance {
 
   String get explanation {
     final items = <String>[];
+    String formatDuration(int minutes) {
+      final h = minutes ~/ 60;
+      final m = minutes % 60;
+      if (h > 0 && m > 0) return '$h giờ $m phút';
+      if (h > 0) return '$h giờ';
+      return '$m phút';
+    }
+
     if (lateMinutes > 0) {
-      items.add('Đi trễ $lateMinutes phút (đã trừ thời gian cho phép).');
+      items.add('Đi trễ ${formatDuration(lateMinutes)} (đã trừ dung sai).');
     }
     if (checkOut == null && DateTime.now().isAfter(scheduledEnd)) {
       items.add(
@@ -163,7 +171,8 @@ class Attendance {
       );
     }
     if (checkOut != null && checkOut!.isBefore(scheduledEnd)) {
-      items.add('Ra sớm ${scheduledEnd.difference(checkOut!).inMinutes} phút.');
+      final earlyMin = scheduledEnd.difference(checkOut!).inMinutes;
+      items.add('Ra sớm ${formatDuration(earlyMin)}.');
     }
     return items.isEmpty
         ? (checkOut == null ? 'Đang trong ca làm.' : 'Không có bất thường.')

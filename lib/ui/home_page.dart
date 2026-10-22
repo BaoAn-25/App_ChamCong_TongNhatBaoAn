@@ -1831,6 +1831,30 @@ class _HomePageState extends State<HomePage> {
                             ],
                           ),
                         ),
+                        if (c.isAdmin)
+                          IconButton(
+                            tooltip: 'Gỡ nhân viên khỏi ca này',
+                            icon: const Icon(
+                              Icons.person_remove_outlined,
+                              color: Colors.red,
+                              size: 18,
+                            ),
+                            onPressed: () async {
+                              final ok = await confirm(
+                                context,
+                                'Gỡ nhân viên ${e.name} khỏi ca ${s.name}?',
+                              );
+                              if (ok && context.mounted) {
+                                Navigator.pop(context);
+                                final copy = Employee.fromJson(e.toJson())
+                                  ..shiftId = null;
+                                await perform(
+                                  () => c.saveEmployee(copy),
+                                  'Đã gỡ ${e.name} khỏi ca ${s.name}',
+                                );
+                              }
+                            },
+                          ),
                       ],
                     ),
                   ),
@@ -1838,6 +1862,57 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         actions: [
+          if (c.isAdmin) ...[
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red),
+              ),
+              icon: const Icon(Icons.delete_outline, size: 16),
+              label: const Text('Xóa ca này'),
+              onPressed: () async {
+                Navigator.pop(context);
+                if (assignedEmps.isEmpty) {
+                  if (await confirm(context, 'Xóa ca ${s.name}?')) {
+                    await perform(() => c.deleteShift(s.id));
+                  }
+                } else {
+                  final names = assignedEmps.map((e) => '• ${e.name}').join('\n');
+                  final ok = await confirm(
+                    context,
+                    'Ca ${s.name} đang có ${assignedEmps.length} người làm:\n$names\n\nHệ thống sẽ tự động gỡ phân ca và xóa ca này. Bạn có chắc không?',
+                  );
+                  if (ok) {
+                    await perform(
+                      () => c.deleteShift(s.id, force: true),
+                      'Đã gỡ phân ca và xóa ca thành công!',
+                    );
+                  }
+                }
+              },
+            ),
+            if (assignedEmps.isNotEmpty)
+              TextButton.icon(
+                icon: const Icon(Icons.group_remove_outlined, size: 16),
+                label: const Text('Gỡ tất cả'),
+                onPressed: () async {
+                  final ok = await confirm(
+                    context,
+                    'Gỡ toàn bộ ${assignedEmps.length} nhân viên khỏi ca ${s.name}?',
+                  );
+                  if (ok && context.mounted) {
+                    Navigator.pop(context);
+                    await perform(() async {
+                      for (final emp in assignedEmps) {
+                        final copy = Employee.fromJson(emp.toJson())
+                          ..shiftId = null;
+                        await c.saveEmployee(copy);
+                      }
+                    }, 'Đã gỡ toàn bộ nhân viên khỏi ca ${s.name}');
+                  }
+                },
+              ),
+          ],
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Đóng'),

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'common.dart';
@@ -22,7 +25,243 @@ class _HomePageState extends State<HomePage> {
   bool performing = false;
   String search = '', requestFilter = 'all', roleFilter = 'all';
   String? deptFilter;
+  String? _avatarBase64;
   DateTimeRange? historyRange;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvatar();
+  }
+
+  Future<void> _loadAvatar() async {
+    final uid = c.user?.id;
+    if (uid == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final b64 = prefs.getString('user_avatar_$uid');
+      if (mounted && b64 != _avatarBase64) {
+        setState(() => _avatarBase64 = b64);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pickAvatar() async {
+    final uid = c.user?.id;
+    if (uid == null) return;
+
+    final source = await showModalBottomSheet<ImageSource?>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Ảnh đại diện',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded, color: Color(0xFF087F8C)),
+              title: const Text('Chụp ảnh từ máy ảnh'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF087F8C)),
+              title: const Text('Chọn ảnh từ thư viện'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            if (_avatarBase64 != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                title: const Text('Xóa ảnh đại diện', style: TextStyle(color: Colors.red)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.remove('user_avatar_$uid');
+                  if (mounted) setState(() => _avatarBase64 = null);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Đã gỡ ảnh đại diện')),
+                    );
+                  }
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (pickedFile == null) return;
+
+      final bytes = await pickedFile.readAsBytes();
+      final b64 = base64Encode(bytes);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_avatar_$uid', b64);
+      if (mounted) {
+        setState(() => _avatarBase64 = b64);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã cập nhật ảnh đại diện thành công!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi tải ảnh: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openEditProfileDialog() async {
+    final u = c.user;
+    if (u == null) return;
+
+    final nameCtrl = TextEditingController(text: u.name);
+    final usernameCtrl = TextEditingController(text: u.username);
+    final passwordCtrl = TextEditingController();
+    bool obscurePass = true;
+    String? error;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.badge_rounded, color: Color(0xFF087F8C)),
+                SizedBox(width: 8),
+                Text('Chỉnh sửa hồ sơ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (error != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Text(error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Họ và tên *',
+                      prefixIcon: Icon(Icons.person_outline),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: usernameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên đăng nhập *',
+                      prefixIcon: Icon(Icons.account_circle_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: passwordCtrl,
+                    obscureText: obscurePass,
+                    decoration: InputDecoration(
+                      labelText: 'Mật khẩu mới (tuỳ chọn)',
+                      helperText: 'Để trống nếu không muốn đổi mật khẩu',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscurePass ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setDialogState(() => obscurePass = !obscurePass),
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Huỷ'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF087F8C),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  final newName = nameCtrl.text.trim();
+                  final newUsername = usernameCtrl.text.trim();
+                  final newPass = passwordCtrl.text.trim();
+
+                  if (newName.isEmpty || newUsername.isEmpty) {
+                    setDialogState(() => error = 'Họ tên và tên đăng nhập không được để trống.');
+                    return;
+                  }
+
+                  try {
+                    Navigator.pop(ctx);
+                    await c.updateProfile(
+                      name: newName,
+                      username: newUsername,
+                      password: newPass.isEmpty ? null : newPass,
+                    );
+                    if (mounted) {
+                      setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Cập nhật hồ sơ thành công!')),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Lỗi cập nhật: $e')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Lưu thay đổi'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
   AppController get c => widget.controller;
   List<Attendance> get records =>
       c.data.attendance
@@ -388,16 +627,21 @@ class _HomePageState extends State<HomePage> {
                 CircleAvatar(
                   radius: 22,
                   backgroundColor: Colors.white.withValues(alpha: 0.2),
-                  child: Text(
-                    c.user!.name.isNotEmpty
-                        ? c.user!.name[0].toUpperCase()
-                        : 'U',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+                  backgroundImage: _avatarBase64 != null
+                      ? MemoryImage(base64Decode(_avatarBase64!))
+                      : null,
+                  child: _avatarBase64 == null
+                      ? Text(
+                          c.user!.name.isNotEmpty
+                              ? c.user!.name[0].toUpperCase()
+                              : 'U',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        )
+                      : null,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -2467,18 +2711,47 @@ class _HomePageState extends State<HomePage> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 32,
-                  backgroundColor: const Color(0xFF087F8C),
-                  child: Text(
-                    c.user!.name.isNotEmpty
-                        ? c.user!.name[0].toUpperCase()
-                        : 'U',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w800,
-                    ),
+                GestureDetector(
+                  onTap: _pickAvatar,
+                  child: Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 34,
+                        backgroundColor: const Color(0xFF087F8C),
+                        backgroundImage: _avatarBase64 != null
+                            ? MemoryImage(base64Decode(_avatarBase64!))
+                            : null,
+                        child: _avatarBase64 == null
+                            ? Text(
+                                c.user!.name.isNotEmpty
+                                    ? c.user!.name[0].toUpperCase()
+                                    : 'U',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              )
+                            : null,
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF087F8C),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt_rounded,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -2556,6 +2829,26 @@ class _HomePageState extends State<HomePage> {
               value: c.user!.department.isEmpty
                   ? 'Chưa phân công'
                   : c.user!.department,
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openEditProfileDialog,
+                icon: const Icon(Icons.edit_rounded, size: 18),
+                label: const Text(
+                  'Chỉnh sửa hồ sơ cá nhân',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF087F8C),
+                  side: const BorderSide(color: Color(0xFF087F8C)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
             ),
           ],
         ),

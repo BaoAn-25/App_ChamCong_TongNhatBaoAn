@@ -325,6 +325,28 @@ class AppController extends ChangeNotifier {
     await syncAll();
   }
 
+  Future<void> updateProfile({
+    required String name,
+    required String username,
+    String? password,
+  }) async {
+    final u = requireUser();
+    final updated = await employeeRepo.update(
+      id: u.id,
+      name: name,
+      username: username,
+      email: u.email,
+      department: u.department,
+      role: u.role,
+      active: u.active,
+      password: password,
+    );
+    _user = updated;
+    final idx = data.employees.indexWhere((e) => e.id == u.id);
+    if (idx != -1) data.employees[idx] = updated;
+    notifyListeners();
+  }
+
   // --- CRUD DEPARTMENTS (ADMIN) ---
 
   Future<void> saveDepartment(Department dept) async {

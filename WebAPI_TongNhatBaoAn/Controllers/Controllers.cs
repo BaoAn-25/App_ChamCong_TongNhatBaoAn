@@ -170,9 +170,12 @@ public class EmployeesController(AppDb db) : ApiBase
         return Created($"/api/employees/{emp.Id}", EmployeeDto.From(emp));
     }
 
-    [HttpPatch("{id:guid}"), Authorize(Roles = Roles.Admin)]
+    [HttpPatch("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, EmployeeUpdate r)
     {
+        var isAdmin = User.IsInRole(Roles.Admin);
+        if (!isAdmin && id != UserId) return Forbid();
+
         var emp = await db.Employees.FindAsync(id);
         if (emp == null) return Fail("Không tìm thấy nhân viên.", 404);
         var name = r.Name ?? emp.Name;
@@ -180,15 +183,16 @@ public class EmployeesController(AppDb db) : ApiBase
         var email = (r.Email ?? emp.Email).Trim().ToLowerInvariant();
         var err = Validators.Employee(name, username, email, string.IsNullOrEmpty(r.Password) ? null : r.Password);
         if (err != null) return Fail(err);
-        var role = (r.Role ?? emp.Role).ToLowerInvariant();
+
+        var role = isAdmin ? (r.Role ?? emp.Role).ToLowerInvariant() : emp.Role;
         if (!Roles.IsValid(role)) return Fail("Vai trò không hợp lệ.");
-        var active = r.Active ?? emp.Active;
-        if (id == UserId && (!active || role != Roles.Admin)) return Fail("Không được khóa hoặc hạ quyền chính mình.", 409);
+        var active = isAdmin ? (r.Active ?? emp.Active) : emp.Active;
+        if (isAdmin && id == UserId && (!active || role != Roles.Admin)) return Fail("Không được khóa hoặc hạ quyền chính mình.", 409);
         if (await db.Employees.AnyAsync(e => e.Id != id && (e.Username == username || e.Email == email)))
             return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409);
 
         emp.Name = name.Trim(); emp.Username = username; emp.Email = email; emp.Role = role; emp.Active = active;
-        if (r.Department != null) emp.Department = r.Department.Trim();
+        if (isAdmin && r.Department != null) emp.Department = r.Department.Trim();
         if (!string.IsNullOrEmpty(r.Password)) emp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password);
         try { await db.SaveChangesAsync(); }
         catch (DbUpdateException) { return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409); }

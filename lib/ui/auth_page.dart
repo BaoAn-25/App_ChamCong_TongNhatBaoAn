@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../data/api_client.dart';
+import '../data/api_repositories.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import 'biometric_page.dart';
@@ -117,20 +118,20 @@ class _AuthPageState extends State<AuthPage> {
       _error = null;
     });
     try {
-      final challenge = await showFaceCamera<String>(
+      final started = await showFaceCamera<OtpChallengeStart>(
         context,
         title: 'Đăng nhập bằng khuôn mặt',
         onCapture: (image) =>
             widget.controller.auth.faceLogin(username: username, image: image),
       );
-      if (challenge == null || !mounted) return;
-      widget.controller.stageFaceLogin(username, challenge);
+      if (started == null || !mounted) return;
+      widget.controller.stageFaceLogin(username, started);
       setState(() {
         _faceLoginFlow = true;
         _otpStep = true;
         _otpPurpose = 'login';
         _targetUsername = username;
-        _targetEmail = null;
+        _targetEmail = started.email;
         _otpController.clear();
       });
     } catch (e) {
@@ -316,7 +317,7 @@ class _AuthPageState extends State<AuthPage> {
         await widget.controller.register(newEmp, _regPassword.text);
       } else if (_faceLoginFlow) {
         final username = _targetUsername ?? _loginUsername.text.trim();
-        final challenge = await showFaceCamera<String>(
+        final started = await showFaceCamera<OtpChallengeStart>(
           context,
           title: 'Xác thực lại để nhận OTP mới',
           onCapture: (image) => widget.controller.auth.faceLogin(
@@ -324,8 +325,9 @@ class _AuthPageState extends State<AuthPage> {
             image: image,
           ),
         );
-        if (challenge == null || !mounted) return;
-        widget.controller.stageFaceLogin(username, challenge);
+        if (started == null || !mounted) return;
+        widget.controller.stageFaceLogin(username, started);
+        _targetEmail = started.email;
       } else {
         await widget.controller.beginLogin(
           _loginUsername.text.trim(),
@@ -937,7 +939,9 @@ class _AuthPageState extends State<AuthPage> {
         Text(
           isRegister
               ? 'Mã OTP gồm 6 số đã được gửi đến email:'
-              : 'Vui lòng nhập mã OTP 6 số gửi đến email của bạn:',
+              : _faceLoginFlow
+              ? 'Khuôn mặt khớp. Mã OTP 6 số đã gửi đến email đăng ký của tài khoản này (không gửi theo Gmail đang mở trên máy):'
+              : 'Vui lòng nhập mã OTP 6 số gửi đến email đã đăng ký của tài khoản:',
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
         ),
@@ -952,6 +956,8 @@ class _AuthPageState extends State<AuthPage> {
               ),
               child: Text(
                 _targetEmail!,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -1008,14 +1014,14 @@ class _AuthPageState extends State<AuthPage> {
             style: const TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.w800,
-              letterSpacing: 14,
+              letterSpacing: 10,
               color: Color(0xFF0F172A),
             ),
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               counterText: '',
               hintText: '••••••',
-              hintStyle: TextStyle(letterSpacing: 14, color: Color(0xFFCBD5E1)),
+              hintStyle: TextStyle(letterSpacing: 10, color: Color(0xFFCBD5E1)),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
@@ -1072,9 +1078,10 @@ class _AuthPageState extends State<AuthPage> {
         ),
         const SizedBox(height: 12),
 
-        // Nút gửi lại mã & nút quay lại
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
           children: [
             TextButton.icon(
               onPressed: _busy

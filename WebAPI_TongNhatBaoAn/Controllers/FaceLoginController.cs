@@ -49,6 +49,6 @@ public class FaceLoginController(AppDb db, FaceMatcher matcher, FaceTemplateCiph
             return Fail(OtpDeliveryException.PublicMessage, 503);
         }
         // No accessToken/refreshToken until POST /api/auth/verify-otp succeeds.
-        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null));
+        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null, employee.Email));
     }
 }

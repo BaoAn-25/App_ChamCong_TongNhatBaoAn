@@ -480,7 +480,7 @@ BEGIN
     -- quarantine for review rather than inventing a start time/break or counting unreliable hours.
     UPDATE "Attendance" SET
         "ScheduledStart"="CheckIn",
-        "AutoCloseAt"=((("ScheduledEnd" AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+        "AutoCloseAt"=CASE WHEN "CheckOut" IS NULL AND "ScheduledEnd"<=now() THEN now() ELSE ((("ScheduledEnd" AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') END,
         "Status"=8 | CASE WHEN "LateMinutes">0 THEN 1 ELSE 0 END,
         "NetMinutes"=CASE WHEN "CheckOut" IS NULL THEN 0 ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM ("CheckOut"-"CheckIn"))/60)::integer) END;
 
@@ -496,6 +496,10 @@ BEGIN
     UPDATE "Employees" SET "Name"='Tống Nhật Bảo An'
     WHERE "Role"='admin' AND "Name" IN ('Tổng Nhật Bảo An','Tổng Nhật Bảo An (Admin)');
     UPDATE "Offices" SET "Name"='Văn phòng chính' WHERE "Name"='Van phong chinh';
+
+    UPDATE "WorkRequests" SET "ReviewerName"='Tống Nhật Bảo An'
+    WHERE "ReviewerName" IN ('Tổng Nhật Bảo An','Tổng Nhật Bảo An (Admin)')
+    AND "ReviewedBy" IN (SELECT "Id" FROM "Employees" WHERE "Role"='admin' AND "Name"='Tống Nhật Bảo An');
 
     END IF;
 END $EF$;

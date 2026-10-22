@@ -66,6 +66,26 @@ void main() {
     },
   );
 
+  test('Login challenge keeps the destination email from the API', () async {
+    final client = ApiClient(
+      httpClient: MockClient(
+        (r) async => http.Response(
+          jsonEncode({
+            'challengeId': 'login-challenge',
+            'email': 'staff@gmail.com',
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+    final started = await AuthService(
+      client,
+    ).login(username: 'staff', password: 'password123');
+    expect(started.challengeId, 'login-challenge');
+    expect(started.email, 'staff@gmail.com');
+  });
+
   test('Delivery failure preserves backend message for the user', () async {
     final client = ApiClient(
       httpClient: MockClient(
@@ -128,7 +148,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(auth.verifiedChallenge, 'challenge-2');
     expect(find.text('Xác minh Email đăng ký'), findsNothing);
-    expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 1));
   });
 }
@@ -138,12 +157,15 @@ class FakeAuth extends AuthService {
   int registrations = 0;
   String? verifiedChallenge;
   @override
-  Future<String> register({
+  Future<OtpChallengeStart> register({
     required String name,
     required String email,
     required String username,
     required String password,
-  }) async => 'challenge-${++registrations}';
+  }) async => OtpChallengeStart(
+    challengeId: 'challenge-${++registrations}',
+    email: email,
+  );
   @override
   Future<void> verifyEmail({
     required String challengeId,

@@ -1,4 +1,5 @@
 import 'api_client.dart';
+import 'api_repositories.dart';
 
 class FaceService {
   final ApiClient client;
@@ -13,8 +14,8 @@ class FaceService {
   }
 
   Future<bool> status() async => (await statusInfo()).enrolled;
-  Future<String> requestOtp() async =>
-      (await client.post('/api/face/request-otp'))['challengeId'].toString();
+  Future<OtpChallengeStart> requestOtp() async =>
+      OtpChallengeStart.fromJson(await client.post('/api/face/request-otp'));
   Future<void> enroll(
     String challenge,
     String code,

@@ -38,7 +38,7 @@ public class FaceController(AppDb db, OtpService otp, FaceMatcher matcher, FaceT
             await db.SaveChangesAsync();
             return Fail(OtpDeliveryException.PublicMessage, 503);
         }
-        return Ok(new { challengeId = challenge.Id });
+        return Ok(new { challengeId = challenge.Id, email = employee.Email });
     }
 
     private async Task<bool> OwnChallenge(Guid id) =>

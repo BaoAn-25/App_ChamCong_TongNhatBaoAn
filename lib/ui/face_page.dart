@@ -13,7 +13,7 @@ Future<String?> captureFace(BuildContext context, String title) =>
       onCapture: (image) async => image,
     );
 
-Future<String?> _enterCode(BuildContext context) async {
+Future<String?> _enterCode(BuildContext context, {String? email}) async {
   String code = '';
   return showDialog<String>(
     context: context,
@@ -24,8 +24,10 @@ Future<String?> _enterCode(BuildContext context) async {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Nhập mã vừa gửi đến email của tài khoản. Mã đăng nhập cũ không dùng được ở bước này.',
+            Text(
+              email == null || email.isEmpty
+                  ? 'Nhập mã vừa gửi đến email đã đăng ký của tài khoản. Mã đăng nhập cũ không dùng được ở bước này.'
+                  : 'Nhập mã vừa gửi đến $email. Kiểm tra cả hộp thư Spam/Quảng cáo. Mã đăng nhập cũ không dùng được ở bước này.',
             ),
             const SizedBox(height: 16),
             TextField(
@@ -101,7 +103,7 @@ class _FaceSettingsCardState extends State<FaceSettingsCard> {
       error = null;
     });
     try {
-      final challenge = await service.requestOtp();
+      final started = await service.requestOtp();
       if (!mounted) return;
       String? first, second;
       if (!remove) {
@@ -110,13 +112,16 @@ class _FaceSettingsCardState extends State<FaceSettingsCard> {
         second = await captureFace(context, 'Đăng ký khuôn mặt — ảnh 2/2');
         if (second == null || !mounted) return;
       }
-      final code = await _enterCode(context);
+      final code = await _enterCode(
+        context,
+        email: started.email ?? widget.controller.user?.email,
+      );
       if (code == null) return;
       if (remove) {
-        await service.remove(challenge, code);
+        await service.remove(started.challengeId, code);
       } else {
         await service.enroll(
-          challenge,
+          started.challengeId,
           code,
           first!,
           second!,

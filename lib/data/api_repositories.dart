@@ -1,11 +1,25 @@
 import '../domain/models.dart';
 import 'api_client.dart';
 
+class OtpChallengeStart {
+  final String challengeId;
+  final String? email;
+  const OtpChallengeStart({required this.challengeId, this.email});
+
+  factory OtpChallengeStart.fromJson(Map<String, dynamic> res) {
+    final email = res['email']?.toString().trim();
+    return OtpChallengeStart(
+      challengeId: res['challengeId'].toString(),
+      email: (email == null || email.isEmpty) ? null : email,
+    );
+  }
+}
+
 class AuthService {
   final ApiClient client;
   AuthService(this.client);
 
-  Future<String> register({
+  Future<OtpChallengeStart> register({
     required String name,
     required String email,
     required String username,
@@ -21,7 +35,7 @@ class AuthService {
         'password': password,
       },
     );
-    return res['challengeId'].toString();
+    return OtpChallengeStart.fromJson(res);
   }
 
   Future<void> verifyEmail({
@@ -35,7 +49,7 @@ class AuthService {
     );
   }
 
-  Future<String> login({
+  Future<OtpChallengeStart> login({
     required String username,
     required String password,
   }) async {
@@ -44,10 +58,10 @@ class AuthService {
       auth: false,
       body: {'username': username.trim(), 'password': password},
     );
-    return res['challengeId'].toString();
+    return OtpChallengeStart.fromJson(res);
   }
 
-  Future<String> faceLogin({
+  Future<OtpChallengeStart> faceLogin({
     required String username,
     required String image,
   }) async {
@@ -56,7 +70,7 @@ class AuthService {
       auth: false,
       body: {'username': username.trim(), 'image': image},
     );
-    return res['challengeId'].toString();
+    return OtpChallengeStart.fromJson(res);
   }
 
   Future<Employee> verifyOtp({

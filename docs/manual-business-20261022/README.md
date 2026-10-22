@@ -72,7 +72,7 @@ PATCH không gửi break/grace mới sẽ giữ cấu hình hiện có. `ShiftRe
 
 - `CheckIn`, `CheckOut`, `ScheduledStart`, `ScheduledEnd`, thời điểm duyệt và hết hạn đều là UTC `timestamptz`. PostgreSQL có thể hiển thị cùng một instant theo timezone session; điều đó không làm thay đổi dữ liệu. Ví dụ `05:50Z` chính là `12:50` tại Việt Nam, không được tự cộng 7 giờ vào DB.
 - `From`, `To` là DateOnly, còn `WorkDate` là chuỗi ngày; không gọi `toUtc/toLocal` với các giá trị ngày thuần. Giữ quy ước cũ `WorkDate` = ngày kết thúc ca tại VN để không phá unique key lịch sử; thống kê dùng ngày bắt đầu ca snapshot.
-- Auto-close vào **00:00 VN sau ngày kết thúc ca**. Ca 22:00 ngày 22 đến 06:00 ngày 23 sẽ đóng lúc 00:00 ngày 24. Worker chạy khoảng 30 giây/lần. Nếu Render ngủ, việc đóng diễn ra khi thức dậy hoặc khi gọi punch/list/stats, không thể hứa chạy đúng nửa đêm trong lúc process bị dừng.
+- Auto-close muộn nhất **00:00 VN sau ngày kết thúc ca**, nhưng sớm hơn nếu cần mở cửa sổ vào ca kế tiếp; không bao giờ đóng trước giờ kết thúc ca. Ca 22:00 ngày 22 đến 06:00 ngày 23, vào sớm60, sẽ đóng lúc 21:00 ngày 23 để không chặn ca 22:00 tiếp theo. Ca ngày08:00–17:00 đóng lúc00:00 hôm sau. Worker chạy khoảng 30 giây/lần. Nếu Render ngủ, việc đóng diễn ra khi thức dậy hoặc khi gọi punch/list/stats, không thể hứa chạy đúng nửa đêm trong lúc process bị dừng.
 - Khi tự đóng, CheckOut lưu mốc ScheduledEnd ước tính, `IsAutoClosed=true`, `AutoClosedAt` lưu lúc thực sự đóng; NetMinutes=0. Đây là hồ sơ “Quên check-out”, không phải bằng chứng người dùng đã ra và không được tính ca hoàn tất.
 - Giờ công trừ toàn bộ BreakMinutes một lần cho mỗi checkout thật, không âm. Mô hình này chưa có giờ bắt đầu/kết thúc nghỉ để tính nghỉ giao nhau. Giờ vào sớm/làm sau ca vẫn nằm trong khoảng thực tế, chưa có quy tắc trả lương hoặc duyệt tăng ca riêng.
 - Đi trễ/về sớm = số phút vượt dung sai, làm tròn lên; ví dụ 08:05:01 với dung sai 5 phút bị tính 1 phút trễ. Giờ công thực tế làm tròn xuống theo phút.
@@ -165,7 +165,7 @@ final ranking = company?['ranking'] ?? [];     // Server đã loại 0 giờ
 ## Kiểm tra đã thực hiện và chưa thực hiện
 
 - Backend bộ thay thế build thành công; lần kiểm tra cuối không có warning/error build.
-- 60 kiểm tra C# qua: UTC/offset/Z, ca ngày/qua đêm/gần 00:00, giới hạn giờ, nghỉ, GPS/mock, QR hạn 30/60s/chữ ký, công thức điểm, ngày phép, quyền duyệt, mặc định pending, metadata khóa QR/xmin và SQL khóa chủ đơn.
+- 61 kiểm tra C# qua: UTC/offset/Z, ca ngày/qua đêm/gần 00:00, giới hạn giờ, nghỉ, GPS/mock, QR hạn 30/60s/chữ ký, công thức điểm, ngày phép, quyền duyệt, mặc định pending, metadata khóa QR/xmin và SQL khóa chủ đơn.
 - 15 kiểm tra Dart qua: UTC/offset, reject thiếu timezone, giờ net, cache UTC, auto-close/abnormal không giờ, approval và metadata duyệt.
 - `dart analyze` hai file Flutter thay thế: không issue ở lần kiểm tra đã chạy; chạy lại sau khi dán.
 - SQL được sinh từ EF/Npgsql; chưa thực thi lên PostgreSQL/Neon. Các test metadata/SQL generation không thay cho test đồng thời thật trên DB.

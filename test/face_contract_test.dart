@@ -38,13 +38,17 @@ void main() {
           expect(body['username'], 'employee');
           expect(body['image'], 'live-camera-image');
           expect(body.containsKey('password'), isFalse);
-          return http.Response('{"challengeId":"face-login-challenge"}', 200);
+          return http.Response(
+            '{"challengeId":"face-login-challenge","email":"staff@gmail.com"}',
+            200,
+          );
         }),
       );
-      final challenge = await AuthService(
+      final started = await AuthService(
         api,
       ).faceLogin(username: ' employee ', image: 'live-camera-image');
-      expect(challenge, 'face-login-challenge');
+      expect(started.challengeId, 'face-login-challenge');
+      expect(started.email, 'staff@gmail.com');
       expect(api.hasTokens, isFalse);
     },
   );

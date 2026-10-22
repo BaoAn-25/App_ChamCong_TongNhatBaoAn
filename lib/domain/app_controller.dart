@@ -195,15 +195,15 @@ class AppController extends ChangeNotifier {
     bool bootstrap = false,
   }) async {
     demoOtp = null;
-    final cid = await auth.register(
+    final started = await auth.register(
       name: employee.name,
       email: employee.email,
       username: employee.username,
       password: password,
     );
-    pendingChallengeId = cid;
+    pendingChallengeId = started.challengeId;
     pendingAction = 'register';
-    pendingEmail = employee.email;
+    pendingEmail = started.email ?? employee.email;
     pendingUsername = employee.username;
     notifyListeners();
   }
@@ -220,18 +220,19 @@ class AppController extends ChangeNotifier {
 
   Future<void> beginLogin(String username, String password) async {
     demoOtp = null;
-    final cid = await auth.login(username: username, password: password);
-    pendingChallengeId = cid;
+    final started = await auth.login(username: username, password: password);
+    pendingChallengeId = started.challengeId;
     pendingAction = 'login';
     pendingUsername = username;
+    pendingEmail = started.email;
     notifyListeners();
   }
 
-  void stageFaceLogin(String username, String challenge) {
-    pendingChallengeId = challenge;
+  void stageFaceLogin(String username, OtpChallengeStart started) {
+    pendingChallengeId = started.challengeId;
     pendingAction = 'login';
     pendingUsername = username;
-    pendingEmail = null;
+    pendingEmail = started.email;
     demoOtp = null;
     notifyListeners();
   }

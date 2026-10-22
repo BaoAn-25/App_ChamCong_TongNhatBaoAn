@@ -53,7 +53,7 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
             await db.SaveChangesAsync();
             return Fail(OtpDeliveryException.PublicMessage, 503);
         }
-        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null));
+        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null, emp.Email));
     }
 
     [HttpPost("verify-email")]
@@ -84,7 +84,7 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
             await db.SaveChangesAsync();
             return Fail(OtpDeliveryException.PublicMessage, 503);
         }
-        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null));
+        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null, emp.Email));
     }
 
     [HttpPost("verify-otp")]

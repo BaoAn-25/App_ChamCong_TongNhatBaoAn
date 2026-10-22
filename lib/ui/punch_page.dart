@@ -8,7 +8,6 @@ import '../data/face_service.dart';
 import '../data/api_client.dart';
 import 'face_camera_page.dart';
 import 'face_page.dart';
-import 'biometric_page.dart';
 import 'common.dart';
 import 'home_page.dart' show acquirePosition;
 
@@ -22,7 +21,6 @@ class PunchPage extends StatefulWidget {
 class _PunchPageState extends State<PunchPage> {
   bool busy = false;
   bool? enrolled;
-  bool needsEnrollment = false;
   bool reconcile = false;
   String? error, result, gpsDetail;
   int step = -1;
@@ -153,7 +151,6 @@ class _PunchPageState extends State<PunchPage> {
       busy = true;
       error = null;
       result = null;
-      needsEnrollment = false;
       done.clear();
       step = -1;
     });
@@ -222,17 +219,6 @@ class _PunchPageState extends State<PunchPage> {
         if (proof == null) {
           throw StateError('Đã hủy xác thực khuôn mặt. Hãy thử lại.');
         }
-      } else if (await BiometricLoginHelper.isEnabled) {
-        if (!await BiometricLoginHelper.authenticate()) {
-          throw StateError(
-            'Xác thực sinh trắc học chưa thành công. Hãy thử lại.',
-          );
-        }
-      } else {
-        needsEnrollment = true;
-        throw StateError(
-          'Chưa đăng ký khuôn mặt. Mở Tài khoản để đăng ký trước khi chấm công.',
-        );
       }
       if (!mounted) return;
       setState(() {
@@ -264,7 +250,7 @@ class _PunchPageState extends State<PunchPage> {
           office.latitude!,
           office.longitude!,
         ),
-        capturedAt: p.timestamp,
+        capturedAt: DateTime.now().toUtc(),
         mocked: p.isMocked,
       );
       if (!mounted) return;
@@ -338,7 +324,10 @@ class _PunchPageState extends State<PunchPage> {
               ? 'Khuôn mặt: đã đăng ký'
               : 'Khuôn mặt: Chưa đăng ký',
         ),
-        if (enrolled == false)
+        if (enrolled == false) ...[
+          const Text(
+            'Chưa đăng ký khuôn mặt: chấm công bằng GPS + QR. Đăng ký mẫu nếu muốn khóa chấm hộ bằng mặt.',
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -346,6 +335,7 @@ class _PunchPageState extends State<PunchPage> {
               child: const Text('Mở Tài khoản để đăng ký'),
             ),
           ),
+        ],
         const SizedBox(height: 16),
         _PunchButton(
           busy: busy,
@@ -362,12 +352,13 @@ class _PunchPageState extends State<PunchPage> {
           done: done,
           failed: error != null,
           gpsDetail: gpsDetail,
+          faceRequired: enrolled == true,
         ),
         if (error != null)
           _PunchError(
             message: error!,
             onRetry: busy ? null : _run,
-            onAccount: needsEnrollment && !busy ? _account : null,
+            onAccount: enrolled == false && !busy ? _account : null,
           ),
         if (result != null)
           Padding(
@@ -481,19 +472,23 @@ class _StepChecklist extends StatelessWidget {
   final int active;
   final Set<int> done;
   final bool failed;
+  final bool faceRequired;
   final String? gpsDetail;
   const _StepChecklist({
     required this.active,
     required this.done,
     required this.failed,
+    required this.faceRequired,
     this.gpsDetail,
   });
   @override
   Widget build(BuildContext context) {
-    const labels = [
+    final labels = [
       'Kiểm tra vị trí GPS',
       'Quét QR văn phòng',
-      'Xác thực khuôn mặt / sinh trắc học',
+      faceRequired
+          ? 'Xác thực khuôn mặt'
+          : 'Khuôn mặt (bỏ qua nếu chưa đăng ký)',
       'Gửi và ghi nhận giờ',
     ];
     return Column(

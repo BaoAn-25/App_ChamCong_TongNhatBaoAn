@@ -34,7 +34,7 @@ class FakeCamera extends CameraPlatform {
     CameraDescription description,
     MediaSettings settings,
   ) async {
-    expect(settings.enableAudio, isFalse);
+    expectSync(settings.enableAudio, isFalse);
     return ++created;
   }
 

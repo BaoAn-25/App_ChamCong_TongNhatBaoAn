@@ -1647,20 +1647,24 @@ class _HomePageState extends State<HomePage> {
                                 : Colors.blue.shade700,
                           ),
                           const SizedBox(width: 4),
-                          Text(
-                            c.data.shifts
-                                    .where((s) => s.id == e.shiftId)
-                                    .firstOrNull
-                                    ?.name ??
-                                'Chưa chọn / phân ca',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: e.shiftId == null
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              color: e.shiftId == null
-                                  ? Colors.orange.shade800
-                                  : Colors.blue.shade700,
+                          Expanded(
+                            child: Text(
+                              c.data.shifts
+                                      .where((s) => s.id == e.shiftId)
+                                      .firstOrNull
+                                      ?.name ??
+                                  'Chưa chọn / phân ca',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: e.shiftId == null
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                color: e.shiftId == null
+                                    ? Colors.orange.shade800
+                                    : Colors.blue.shade700,
+                              ),
                             ),
                           ),
                         ],
@@ -2609,7 +2613,7 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: selectedShiftId,
+                initialValue: selectedShiftId,
                 decoration: const InputDecoration(
                   labelText: 'Ca làm gán đồng loạt',
                   border: OutlineInputBorder(),
@@ -2675,19 +2679,26 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 12),
-              for (final s in c.data.shifts)
-                RadioListTile<String>(
-                  value: s.id,
-                  groupValue: selected,
-                  title: Text(
-                    s.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text(
-                    '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Trễ ${s.grace}p',
-                  ),
-                  onChanged: (val) => setDialogState(() => selected = val),
+              RadioGroup<String>(
+                groupValue: selected,
+                onChanged: (val) => setDialogState(() => selected = val),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final s in c.data.shifts)
+                      RadioListTile<String>(
+                        value: s.id,
+                        title: Text(
+                          s.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          '${minuteText(s.startMinute)} – ${minuteText(s.endMinute)} • Trễ ${s.grace}p',
+                        ),
+                      ),
+                  ],
                 ),
+              ),
             ],
           ),
           actions: [
@@ -3174,6 +3185,8 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Text(
                         c.user!.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
@@ -3204,12 +3217,16 @@ class _HomePageState extends State<HomePage> {
                               color: roleColor,
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              roleName,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: roleColor,
+                            Flexible(
+                              child: Text(
+                                roleName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: roleColor,
+                                ),
                               ),
                             ),
                           ],
@@ -3402,27 +3419,31 @@ class _HomePageState extends State<HomePage> {
           child: Icon(icon, size: 18, color: const Color(0xFF64748B)),
         ),
         const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 11,
-                color: Color(0xFF94A3B8),
-                fontWeight: FontWeight.w500,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF94A3B8),
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF1E293B),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1E293B),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -3599,11 +3620,12 @@ class _OfficeQrDialogState extends State<OfficeQrDialog> {
                       onPressed: () async {
                         try {
                           final position = await acquirePosition();
-                          if (!mounted) return;
+                          if (!context.mounted) return;
                           await widget.onEditOffice!(position);
-                          if (mounted) setState(() {});
+                          if (!context.mounted) return;
+                          setState(() {});
                         } catch (e) {
-                          if (mounted) message(context, e);
+                          if (context.mounted) message(context, e);
                         }
                       },
                       child: const Text('Ghim GPS tại đây'),

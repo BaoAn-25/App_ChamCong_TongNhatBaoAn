@@ -5,6 +5,10 @@ import '../../session_storage.dart';
 import '../../widgets/app_widgets.dart';
 import 'dashboard_screen.dart';
 import 'manage_screen.dart';
+import 'timesheet_screen.dart';
+import 'requests_screen.dart';
+import 'statistics_screen.dart';
+import 'account_screen.dart';
 
 /// Khung điều hướng Admin (Admin Shell) theo chuẩn thiết kế mới:
 /// - NavigationBar 5 tab nhãn CỐ ĐỊNH:
@@ -187,6 +191,19 @@ class _AdminShellState extends State<AdminShell> {
                           ),
                         1 => AdminManageScreen(
                             controller: c,
+                          ),
+                        2 => AdminTimesheetScreen(
+                            controller: c,
+                          ),
+                        3 => AdminRequestsScreen(
+                            controller: c,
+                          ),
+                        4 => AdminStatisticsScreen(
+                            controller: c,
+                          ),
+                        5 => AdminAccountScreen(
+                            controller: c,
+                            onLogout: _handleLogout,
                           ),
                         _ => Center(
                             child: Text(

@@ -8,19 +8,21 @@ import 'app_widgets.dart';
 
 /// Bottom Sheet hiển thị chi tiết chấm công:
 /// - Tái sử dụng cho màn Tổng quan và màn Bảng công
-/// - Hiển thị địa chỉ thực tế (reverse geocoded) thay vì tọa độ số thô
-/// - Tích hợp bản đồ trực quan bằng OpenStreetMap (flutter_map)
-/// - Hiển thị StatusChip và thời gian vào/ra rõ ràng
+/// - Dòng thời gian vào/ra, GPS vào/ra, sai số đo lường
+/// - Giải thích đi trễ/ra sớm (chi tiết dung sai)
+/// - Bản đồ nhỏ (flutter_map + OpenStreetMap) có marker vào, ra và vòng tròn bán kính văn phòng
 class AttendanceDetailSheet extends StatefulWidget {
   final Attendance attendance;
   final String employeeName;
   final String? department;
+  final Office? office;
 
   const AttendanceDetailSheet({
     super.key,
     required this.attendance,
     required this.employeeName,
     this.department,
+    this.office,
   });
 
   /// Hàm tiện ích mở Bottom Sheet chi tiết chấm công
@@ -29,6 +31,7 @@ class AttendanceDetailSheet extends StatefulWidget {
     required Attendance attendance,
     required String employeeName,
     String? department,
+    Office? office,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -38,6 +41,7 @@ class AttendanceDetailSheet extends StatefulWidget {
         attendance: attendance,
         employeeName: employeeName,
         department: department,
+        office: office,
       ),
     );
   }
@@ -53,18 +57,14 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
   String? _outAddress;
   bool _loadingIn = true;
   bool _loadingOut = false;
-  bool _showMap = false;
-  LatLng? _selectedMapPoint;
 
   Attendance get a => widget.attendance;
+  Office? get office => widget.office;
 
   @override
   void initState() {
     super.initState();
     _fetchAddresses();
-    if (a.latitude != 0 || a.longitude != 0) {
-      _selectedMapPoint = LatLng(a.latitude, a.longitude);
-    }
   }
 
   Future<void> _fetchAddresses() async {
@@ -127,7 +127,6 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
     return fallback;
   }
 
-  /// Xác định loại chip trạng thái hiển thị
   Widget _buildStatusChip() {
     if (a.lateMinutes > 0) {
       return StatusChip('Đi trễ ${a.lateMinutes}p', icon: Icons.alarm_off_outlined);
@@ -152,8 +151,20 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
         a.outLongitude != null &&
         (a.outLatitude != 0 || a.outLongitude != 0);
 
+    final hasOffice = office != null &&
+        office!.latitude != null &&
+        office!.longitude != null &&
+        office!.latitude != 0;
+
+    // Tọa độ tâm bản đồ: ưu tiên vị trí vào, hoặc văn phòng
+    final centerPoint = hasInLocation
+        ? LatLng(a.latitude, a.longitude)
+        : (hasOffice
+            ? LatLng(office!.latitude!, office!.longitude!)
+            : const LatLng(10.7769, 106.7009));
+
     return DraggableScrollableSheet(
-      initialChildSize: 0.75,
+      initialChildSize: 0.82,
       minChildSize: 0.5,
       maxChildSize: 0.95,
       expand: false,
@@ -177,7 +188,7 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
               ),
               const SizedBox(height: 14),
 
-              // Tiêu đề Sheet
+              // Header Sheet
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
@@ -232,13 +243,12 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                   controller: scrollController,
                   padding: const EdgeInsets.all(20),
                   children: [
-                    // Khối thời gian vào / ra
+                    // 1. Khối thời gian vào / ra & tổng giờ
                     AppCard(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         children: [
                           _buildTimeRow(
-                            context: context,
                             icon: Icons.login_rounded,
                             iconColor: AppColors.success,
                             title: 'Thời gian vào',
@@ -250,101 +260,128 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                             child: Divider(color: AppColors.border, height: 1),
                           ),
                           _buildTimeRow(
-                            context: context,
                             icon: Icons.logout_rounded,
                             iconColor: a.checkOut != null ? AppColors.orange : AppColors.textSecondary,
                             title: 'Thời gian ra',
                             time: a.checkOut != null ? clock(a.checkOut) : 'Chưa ghi nhận',
                             date: a.checkOut != null ? dateLabel(a.checkOut!) : 'Chưa kết thúc ca',
                           ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 10),
+                            child: Divider(color: AppColors.border, height: 1),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Tổng thời gian làm việc',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              Text(
+                                '${a.hours.toStringAsFixed(1)} giờ',
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.teal,
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
 
-                    // Khối địa điểm và vị trí thực tế
+                    // 2. Khối GPS & Sai số đo lường
                     AppCard(
                       padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Vị trí điểm danh',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.textPrimary,
-                                ),
-                              ),
-                              if (hasInLocation || hasOutLocation)
-                                TextButton.icon(
-                                  onPressed: () {
-                                    setState(() => _showMap = !_showMap);
-                                  },
-                                  icon: Icon(
-                                    _showMap ? Icons.map_outlined : Icons.pin_drop_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(_showMap ? 'Ẩn bản đồ' : 'Xem bản đồ'),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: AppColors.teal,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                  ),
-                                ),
-                            ],
+                          const Text(
+                            'Thông tin vị trí & GPS',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                            ),
                           ),
                           const SizedBox(height: 12),
 
                           // Vị trí vào
-                          _buildLocationItem(
+                          _buildLocationDetailItem(
                             label: 'Vị trí vào:',
+                            coords: hasInLocation
+                                ? '${a.latitude.toStringAsFixed(5)}, ${a.longitude.toStringAsFixed(5)}'
+                                : 'Không có GPS',
+                            accuracy: hasInLocation ? '±${a.accuracy.toStringAsFixed(1)}m' : null,
                             address: _inAddress,
                             loading: _loadingIn,
                             iconColor: AppColors.teal,
-                            onViewOnMap: hasInLocation
-                                ? () => setState(() {
-                                      _showMap = true;
-                                      _selectedMapPoint = LatLng(a.latitude, a.longitude);
-                                    })
-                                : null,
                           ),
                           const SizedBox(height: 12),
 
                           // Vị trí ra
-                          _buildLocationItem(
+                          _buildLocationDetailItem(
                             label: 'Vị trí ra:',
-                            address: a.checkOut != null
-                                ? _outAddress
-                                : 'Chưa có dữ liệu ra ca',
+                            coords: hasOutLocation
+                                ? '${a.outLatitude!.toStringAsFixed(5)}, ${a.outLongitude!.toStringAsFixed(5)}'
+                                : (a.checkOut != null ? 'Không có GPS' : 'Chưa ghi nhận'),
+                            accuracy: null,
+                            address: a.checkOut != null ? _outAddress : 'Chưa kết thúc ca',
                             loading: _loadingOut,
                             iconColor: AppColors.orange,
-                            onViewOnMap: hasOutLocation
-                                ? () => setState(() {
-                                      _showMap = true;
-                                      _selectedMapPoint =
-                                          LatLng(a.outLatitude!, a.outLongitude!);
-                                    })
-                                : null,
                           ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
 
-                          // Khung bản đồ OpenStreetMap
-                          if (_showMap && _selectedMapPoint != null) ...[
-                            const SizedBox(height: 16),
+                    // 3. Bản đồ nhỏ (flutter_map) với Marker vào/ra và Vòng tròn bán kính văn phòng
+                    if (hasInLocation || hasOffice) ...[
+                      AppCard(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Bản đồ vị trí điểm danh',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                if (hasOffice)
+                                  Text(
+                                    'Bán kính VP: ${office!.radius.round()}m',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
                             ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(14),
                               child: Container(
-                                height: 180,
+                                height: 200,
                                 decoration: BoxDecoration(
                                   border: Border.all(color: AppColors.border),
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(14),
                                 ),
                                 child: FlutterMap(
                                   options: MapOptions(
-                                    initialCenter: _selectedMapPoint!,
-                                    initialZoom: 16.0,
+                                    initialCenter: centerPoint,
+                                    initialZoom: 15.5,
                                   ),
                                   children: [
                                     TileLayer(
@@ -353,31 +390,89 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                                       userAgentPackageName:
                                           'com.example.app_cham_cong_tong_nhat_bao_an',
                                     ),
+                                    // Vòng tròn bán kính văn phòng
+                                    if (hasOffice)
+                                      CircleLayer(
+                                        circles: [
+                                          CircleMarker(
+                                            point: LatLng(office!.latitude!, office!.longitude!),
+                                            radius: office!.radius,
+                                            useRadiusInMeter: true,
+                                            color: AppColors.teal.withValues(alpha: 0.15),
+                                            borderColor: AppColors.teal,
+                                            borderStrokeWidth: 1.5,
+                                          ),
+                                        ],
+                                      ),
+                                    // Markers
                                     MarkerLayer(
                                       markers: [
-                                        Marker(
-                                          point: _selectedMapPoint!,
-                                          width: 40,
-                                          height: 40,
-                                          child: const Icon(
-                                            Icons.location_on,
-                                            color: AppColors.error,
-                                            size: 38,
+                                        // Marker văn phòng
+                                        if (hasOffice)
+                                          Marker(
+                                            point: LatLng(office!.latitude!, office!.longitude!),
+                                            width: 44,
+                                            height: 44,
+                                            child: const Icon(
+                                              Icons.business_rounded,
+                                              color: AppColors.navy,
+                                              size: 36,
+                                            ),
                                           ),
-                                        ),
+                                        // Marker điểm check-in
+                                        if (hasInLocation)
+                                          Marker(
+                                            point: LatLng(a.latitude, a.longitude),
+                                            width: 40,
+                                            height: 40,
+                                            child: const Icon(
+                                              Icons.location_on,
+                                              color: AppColors.teal,
+                                              size: 36,
+                                            ),
+                                          ),
+                                        // Marker điểm check-out
+                                        if (hasOutLocation)
+                                          Marker(
+                                            point: LatLng(a.outLatitude!, a.outLongitude!),
+                                            width: 40,
+                                            height: 40,
+                                            child: const Icon(
+                                              Icons.location_on,
+                                              color: AppColors.orange,
+                                              size: 36,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ],
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 8),
+                            // Chú thích bản đồ
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (hasOffice) ...[
+                                  _buildMapLegend(AppColors.navy, 'Văn phòng'),
+                                  const SizedBox(width: 14),
+                                ],
+                                if (hasInLocation) ...[
+                                  _buildMapLegend(AppColors.teal, 'Vị trí vào'),
+                                  const SizedBox(width: 14),
+                                ],
+                                if (hasOutLocation)
+                                  _buildMapLegend(AppColors.orange, 'Vị trí ra'),
+                              ],
+                            ),
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
+                    ],
 
-                    // Ghi chú & Giải thích của hệ thống
+                    // 4. Giải thích đi trễ / ra sớm (chi tiết dung sai)
                     if (a.explanation.isNotEmpty) ...[
                       AppCard(
                         padding: const EdgeInsets.all(16),
@@ -386,11 +481,10 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                           children: [
                             const Row(
                               children: [
-                                Icon(Icons.info_outline_rounded,
-                                    size: 18, color: AppColors.teal),
+                                Icon(Icons.info_outline_rounded, size: 18, color: AppColors.teal),
                                 SizedBox(width: 8),
                                 Text(
-                                  'Ghi chú hệ thống',
+                                  'Giải thích chấm công chi tiết',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w700,
@@ -405,7 +499,7 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: AppColors.textSecondary,
-                                height: 1.4,
+                                height: 1.45,
                               ),
                             ),
                           ],
@@ -414,7 +508,6 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
                       const SizedBox(height: 16),
                     ],
 
-                    // Nút đóng
                     PrimaryButton(
                       title: 'Đóng',
                       onPressed: () => Navigator.pop(context),
@@ -430,8 +523,18 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
     );
   }
 
+  Widget _buildMapLegend(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+      ],
+    );
+  }
+
   Widget _buildTimeRow({
-    required BuildContext context,
     required IconData icon,
     required Color iconColor,
     required String title,
@@ -455,42 +558,31 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 2),
               Text(
                 time,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
               ),
             ],
           ),
         ),
         Text(
           date,
-          style: const TextStyle(
-            fontSize: 13,
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w500,
-          ),
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
         ),
       ],
     );
   }
 
-  Widget _buildLocationItem({
+  Widget _buildLocationDetailItem({
     required String label,
+    required String coords,
+    required String? accuracy,
     required String? address,
     required bool loading,
     required Color iconColor,
-    VoidCallback? onViewOnMap,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -501,53 +593,58 @@ class _AttendanceDetailSheetState extends State<AttendanceDetailSheet> {
           width: 80,
           child: Text(
             label,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
           ),
         ),
         Expanded(
-          child: loading
-              ? const Row(
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: AppColors.teal,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    coords,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                  ),
+                  if (accuracy != null) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: AppColors.input,
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'Đang tra cứu địa chỉ...',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontStyle: FontStyle.italic,
-                        color: AppColors.textSecondary,
+                      child: Text(
+                        'Sai số: $accuracy',
+                        style: const TextStyle(fontSize: 10, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ],
-                )
-              : Text(
-                  address ?? 'Chưa xác định',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-        ),
-        if (onViewOnMap != null)
-          IconButton(
-            tooltip: 'Xem trên bản đồ',
-            onPressed: onViewOnMap,
-            icon: const Icon(Icons.map_rounded, size: 18, color: AppColors.teal),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                ],
+              ),
+              const SizedBox(height: 2),
+              loading
+                  ? const Row(
+                      children: [
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 1.5, color: AppColors.teal),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'Đang tra cứu địa chỉ...',
+                          style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      address ?? 'Chưa xác định',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+            ],
           ),
+        ),
       ],
     );
   }

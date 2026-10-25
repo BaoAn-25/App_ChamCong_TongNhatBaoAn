@@ -5,6 +5,7 @@ import '../../core/app_theme.dart';
 import '../../domain/app_controller.dart';
 import '../../domain/models.dart';
 import '../../widgets/app_widgets.dart';
+import 'employee_history_screen.dart';
 
 /// Màn hình Quản lý Nhân sự dành cho Admin:
 /// 5. Khối Văn phòng chấm công: Tên, bán kính, tọa độ rút gọn; 2 nút Cấu hình & Dùng vị trí hiện tại bằng nhau; nút QR chỉ hiện khi requireQr = true; form cấu hình là Bottom Sheet.
@@ -712,7 +713,17 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
               icon: const Icon(Icons.more_vert_rounded, color: AppColors.textSecondary),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               onSelected: (val) async {
-                if (val == 'edit') {
+                if (val == 'history') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => EmployeeHistoryScreen(
+                        controller: c,
+                        userId: employee.id,
+                      ),
+                    ),
+                  );
+                } else if (val == 'edit') {
                   _openEmployeeSheet(employee);
                 } else if (val == 'assign_shift') {
                   _openAssignShiftDialog(employee);
@@ -750,6 +761,16 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                 }
               },
               itemBuilder: (ctx) => [
+                const PopupMenuItem(
+                  value: 'history',
+                  child: Row(
+                    children: [
+                      Icon(Icons.history_rounded, size: 18, color: AppColors.teal),
+                      SizedBox(width: 8),
+                      Text('Lịch sử chấm công'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'edit',
                   child: Row(

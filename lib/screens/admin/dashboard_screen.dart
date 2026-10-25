@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 import '../../core/app_theme.dart';
 import '../../domain/app_controller.dart';
 import '../../domain/models.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/attendance_detail_sheet.dart';
+import 'attendance_map_screen.dart';
 
 /// Màn hình Tổng quan dành cho Quản trị viên (Admin Dashboard):
 /// 1. Thẻ chào gradient navy → teal, tên, huy hiệu vai trò, ngày hôm nay, nút "Đi tới Nhân sự"
@@ -316,7 +315,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               icon: Icons.map_rounded,
               color: AppColors.teal,
               label: 'Bản đồ',
-              onTap: () => _openAttendanceMapView(context),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AttendanceMapScreen(controller: c),
+                ),
+              ),
             ),
           ],
         );
@@ -556,113 +560,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         );
       }).toList(),
-    );
-  }
-
-  /// Mở giao diện Bản đồ chấm công hôm nay
-  void _openAttendanceMapView(BuildContext context) {
-    final todayPoints = _todayRecords
-        .where((a) => a.latitude != 0 && a.longitude != 0)
-        .map((a) => LatLng(a.latitude, a.longitude))
-        .toList();
-
-    final office = c.data.office;
-    final officePoint = office.configured && office.latitude != null && office.longitude != null
-        ? LatLng(office.latitude!, office.longitude!)
-        : (todayPoints.isNotEmpty ? todayPoints.first : const LatLng(10.7769, 106.7009));
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.85,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        builder: (ctx, scroll) => Container(
-          decoration: const BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                child: Row(
-                  children: [
-                    const Icon(Icons.map_rounded, color: AppColors.teal),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'Bản đồ vị trí chấm công hôm nay',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1, color: AppColors.border),
-              Expanded(
-                child: FlutterMap(
-                  options: MapOptions(
-                    initialCenter: officePoint,
-                    initialZoom: 15.0,
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.example.app_cham_cong_tong_nhat_bao_an',
-                    ),
-                    MarkerLayer(
-                      markers: [
-                        if (office.configured && office.latitude != null)
-                          Marker(
-                            point: officePoint,
-                            width: 50,
-                            height: 50,
-                            child: const Icon(
-                              Icons.business_rounded,
-                              color: AppColors.navy,
-                              size: 40,
-                            ),
-                          ),
-                        for (final a in _todayRecords.where((x) => x.latitude != 0))
-                          Marker(
-                            point: LatLng(a.latitude, a.longitude),
-                            width: 40,
-                            height: 40,
-                            child: const Icon(
-                              Icons.location_on_rounded,
-                              color: AppColors.teal,
-                              size: 34,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

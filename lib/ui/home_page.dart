@@ -1329,19 +1329,9 @@ class _HomePageState extends State<HomePage> {
     ),
     onTap: () => showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Chi tiết chấm công'),
-        content: SingleChildScrollView(
-          child: SelectableText(
-            '${employeeName(a.employeeId)}\n${a.shiftName}\nVào: ${dateLabel(a.checkIn)} ${clock(a.checkIn)}\nRa: ${a.checkOut == null ? 'Chưa ghi nhận' : '${dateLabel(a.checkOut!)} ${clock(a.checkOut)}'}\nGPS vào: ${a.latitude}, ${a.longitude}\nSai số GPS vào: ±${a.accuracy.round()} m\nGPS ra: ${a.outLatitude ?? '—'}, ${a.outLongitude ?? '—'}\n\n${a.explanation}',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Đóng'),
-          ),
-        ],
+      builder: (context) => _AttendanceDetailDialog(
+        attendance: a,
+        employeeName: employeeName(a.employeeId),
       ),
     ),
   );
@@ -4174,4 +4164,220 @@ Future<Position> acquirePosition() async {
       timeLimit: Duration(seconds: 20),
     ),
   );
+}
+
+
+class _AttendanceDetailDialog extends StatefulWidget {
+  final Attendance attendance;
+  final String employeeName;
+  const _AttendanceDetailDialog({
+    required this.attendance,
+    required this.employeeName,
+  });
+
+  @override
+  State<_AttendanceDetailDialog> createState() => _AttendanceDetailDialogState();
+}
+
+class _AttendanceDetailDialogState extends State<_AttendanceDetailDialog> {
+  String? _inAddress;
+  String? _outAddress;
+  bool _loadingIn = true;
+  bool _loadingOut = false;
+  static final Map<String, String> _addrCache = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAddresses();
+  }
+
+  Future<void> _fetchAddresses() async {
+    final a = widget.attendance;
+    _resolve(a.latitude, a.longitude).then((addr) {
+      if (mounted) {
+        setState(() {
+          _inAddress = addr;
+          _loadingIn = false;
+        });
+      }
+    });
+
+    if (a.outLatitude != null && a.outLongitude != null) {
+      setState(() => _loadingOut = true);
+      _resolve(a.outLatitude!, a.outLongitude!).then((addr) {
+        if (mounted) {
+          setState(() {
+            _outAddress = addr;
+            _loadingOut = false;
+          });
+        }
+      });
+    }
+  }
+
+  Future<String> _resolve(double lat, double lng) async {
+    final key = '${lat.toStringAsFixed(5)},${lng.toStringAsFixed(5)}';
+    if (_addrCache.containsKey(key)) return _addrCache[key]!;
+    try {
+      final entries = await geo.Geocoding()
+          .placemarkFromCoordinates(lat, lng)
+          .timeout(const Duration(seconds: 4));
+      if (entries.isNotEmpty) {
+        final pm = entries.first;
+        final parts = [
+          pm.street,
+          pm.subLocality,
+          pm.locality,
+          pm.subAdministrativeArea,
+          pm.administrativeArea,
+        ].whereType<String>().where((v) => v.trim().isNotEmpty).toSet().toList();
+        if (parts.isNotEmpty) {
+          final res = parts.join(', ');
+          _addrCache[key] = res;
+          return res;
+        }
+      }
+    } catch (_) {}
+    return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = widget.attendance;
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.assignment_outlined, color: Color(0xFF0F7C8A)),
+          SizedBox(width: 10),
+          Text('Chi tiết chấm công', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.employeeName,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              a.shiftName,
+              style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF0F7C8A), fontSize: 14),
+            ),
+            const Divider(height: 20),
+            _infoRow('Vào:', '${dateLabel(a.checkIn)} ${clock(a.checkIn)}'),
+            _infoRow(
+              'Ra:',
+              a.checkOut == null
+                  ? 'Chưa ghi nhận'
+                  : '${dateLabel(a.checkOut!)} ${clock(a.checkOut)}',
+            ),
+            const SizedBox(height: 8),
+            _addressRow(
+              label: 'Vị trí vào:',
+              address: _inAddress,
+              loading: _loadingIn,
+            ),
+            const SizedBox(height: 6),
+            if (a.checkOut != null)
+              _addressRow(
+                label: 'Vị trí ra:',
+                address: _outAddress,
+                loading: _loadingOut,
+              )
+            else
+              _infoRow('Vị trí ra:', 'Chưa ghi nhận'),
+            if (a.explanation.isNotEmpty) ...[
+              const Divider(height: 20),
+              Text(
+                a.explanation,
+                style: const TextStyle(fontSize: 13, color: Color(0xFF475569), height: 1.4),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF0F7C8A),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Đóng'),
+        ),
+      ],
+    );
+  }
+
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 85,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF64748B)),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: Color(0xFF1E293B)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addressRow({
+    required String label,
+    required String? address,
+    required bool loading,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 85,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF64748B)),
+            ),
+          ),
+          Expanded(
+            child: loading
+                ? const Row(
+                    children: [
+                      SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF0F7C8A)),
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'Đang tra cứu địa chỉ...',
+                        style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
+                      ),
+                    ],
+                  )
+                : Text(
+                    address ?? 'Không xác định được địa chỉ',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF1E293B)),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -8,6 +8,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../app_config.dart';
+import '../session_storage.dart';
 import '../data/api_repositories.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
@@ -918,13 +920,15 @@ class _HomePageState extends State<HomePage> {
                       color: const Color(0xFF0D9488),
                       onTap: () => editShift(),
                     ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'QR Văn phòng',
-                      icon: Icons.qr_code_2_rounded,
-                      color: const Color(0xFF7C3AED),
-                      onTap: showOfficeQr,
-                    ),
+                    if (AppConfig.requireQr) ...[
+                      const SizedBox(width: 10),
+                      _quickActionItem(
+                        label: 'QR Văn phòng',
+                        icon: Icons.qr_code_2_rounded,
+                        color: const Color(0xFF7C3AED),
+                        onTap: showOfficeQr,
+                      ),
+                    ],
                     const SizedBox(width: 10),
                     _quickActionItem(
                       label: 'Duyệt đơn ($pending)',
@@ -1394,11 +1398,12 @@ class _HomePageState extends State<HomePage> {
                 icon: const Icon(Icons.my_location),
                 label: const Text('Lấy GPS vị trí hiện tại'),
               ),
-              OutlinedButton.icon(
-                onPressed: showOfficeQr,
-                icon: const Icon(Icons.qr_code),
-                label: const Text('Hiển thị QR động'),
-              ),
+              if (AppConfig.requireQr)
+                OutlinedButton.icon(
+                  onPressed: showOfficeQr,
+                  icon: const Icon(Icons.qr_code),
+                  label: const Text('Hiển thị QR động'),
+                ),
             ],
           ),
         ),
@@ -3374,6 +3379,7 @@ class _HomePageState extends State<HomePage> {
               'Bạn có chắc chắn muốn đăng xuất khỏi tài khoản ${c.user!.name}?',
             );
             if (ok) {
+              await SessionStorage.clearSession();
               c.logout();
             }
           },

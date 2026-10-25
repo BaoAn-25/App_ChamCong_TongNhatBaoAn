@@ -1,3 +1,4 @@
+import '../app_config.dart';
 import '../domain/models.dart';
 import 'api_client.dart';
 
@@ -347,7 +348,7 @@ class AttendanceRepository {
   AttendanceRepository(this.client);
 
   Future<Attendance> checkIn({
-    required String qr,
+    String? qr,
     required double latitude,
     required double longitude,
     required double accuracy,
@@ -357,25 +358,28 @@ class AttendanceRepository {
     String? faceProof,
     String? shiftId,
   }) async {
+    final body = <String, dynamic>{
+      'latitude': latitude,
+      'longitude': longitude,
+      'accuracy': accuracy,
+      'capturedAt': capturedAt.toUtc().toIso8601String(),
+      'idempotencyKey': idempotencyKey,
+      'isMocked': isMocked,
+      'faceProof': ?faceProof,
+      'shiftId': ?shiftId,
+    };
+    if (AppConfig.requireQr && qr != null && qr.isNotEmpty) {
+      body['qr'] = qr.trim();
+    }
     final res = await client.post(
       '/api/attendance/check-in',
-      body: {
-        'qr': qr.trim(),
-        'latitude': latitude,
-        'longitude': longitude,
-        'accuracy': accuracy,
-        'capturedAt': capturedAt.toUtc().toIso8601String(),
-        'idempotencyKey': idempotencyKey,
-        'isMocked': isMocked,
-        'faceProof': ?faceProof,
-        'shiftId': ?shiftId,
-      },
+      body: body,
     );
     return Attendance.fromJson(res);
   }
 
   Future<Attendance> checkOut({
-    required String qr,
+    String? qr,
     required double latitude,
     required double longitude,
     required double accuracy,
@@ -384,18 +388,21 @@ class AttendanceRepository {
     bool isMocked = false,
     String? faceProof,
   }) async {
+    final body = <String, dynamic>{
+      'latitude': latitude,
+      'longitude': longitude,
+      'accuracy': accuracy,
+      'capturedAt': capturedAt.toUtc().toIso8601String(),
+      'idempotencyKey': idempotencyKey,
+      'isMocked': isMocked,
+      'faceProof': ?faceProof,
+    };
+    if (AppConfig.requireQr && qr != null && qr.isNotEmpty) {
+      body['qr'] = qr.trim();
+    }
     final res = await client.post(
       '/api/attendance/check-out',
-      body: {
-        'qr': qr.trim(),
-        'latitude': latitude,
-        'longitude': longitude,
-        'accuracy': accuracy,
-        'capturedAt': capturedAt.toUtc().toIso8601String(),
-        'idempotencyKey': idempotencyKey,
-        'isMocked': isMocked,
-        'faceProof': ?faceProof,
-      },
+      body: body,
     );
     return Attendance.fromJson(res);
   }

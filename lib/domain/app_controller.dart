@@ -451,7 +451,7 @@ class AppController extends ChangeNotifier {
   // --- ATTENDANCE (EMPLOYEE PUNCH) ---
 
   Future<void> punch({
-    required String qr,
+    String? qr,
     required double latitude,
     required double longitude,
     required double accuracy,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../session_storage.dart';
 import '../data/api_client.dart';
 import '../data/api_repositories.dart';
 import '../domain/app_controller.dart';
@@ -7,6 +8,29 @@ import '../domain/models.dart';
 import 'biometric_page.dart';
 import 'face_camera_page.dart';
 import 'common.dart';
+
+// ============================================================================
+// 1. BẢNG MÀU & STYLE DÙNG CHUNG (THEME CONSTANTS)
+// ============================================================================
+class AuthColors {
+  // Màu nhấn chủ đạo (Teal đồng nhất toàn bộ màn hình)
+  static const Color primary = Color(0xFF0F7C8A);
+  static const Color primaryDark = Color(0xFF0B5D68);
+  static const Color primaryLight = Color(0xFFE6F4F6);
+  static const Color primaryFocusBorder = Color(0xFF0F7C8A);
+
+  // Màu viền và nền ô nhập
+  static const Color inputBorder = Color(0xFFCBD5E1); // Viền xám trung tính rõ nét
+  static const Color inputFill = Color(0xFFF8FAFC);   // Nền đồng nhất cho mọi ô
+  static const Color inputBorderError = Color(0xFFDC2626); // Viền đỏ khi lỗi
+
+  // Màu chữ & icon đủ độ tương phản
+  static const Color textPrimary = Color(0xFF1E293B);   // Tiêu đề & nội dung chính
+  static const Color textSecondary = Color(0xFF475569); // Chữ phụ, hướng dẫn
+  static const Color textMuted = Color(0xFF64748B);     // Placeholder, helper
+  static const Color iconColor = Color(0xFF64748B);     // Bộ icon nét đồng nhất
+  static const Color error = Color(0xFFDC2626);
+}
 
 class AuthPage extends StatefulWidget {
   final AppController controller;
@@ -34,6 +58,9 @@ class _AuthPageState extends State<AuthPage> {
   // Controller cho OTP
   final _otpController = TextEditingController();
 
+  // 6. Công tắc Ghi nhớ đăng nhập (mặc định bật)
+  bool _rememberMe = true;
+
   bool _busy = false;
   bool _otpStep = false;
   bool _faceLoginFlow = false;
@@ -46,8 +73,7 @@ class _AuthPageState extends State<AuthPage> {
   bool _obscureRegConfirmPass = true;
   String? _error;
 
-  /// Đăng nhập nhanh: sinh trắc học thay thế bước OTP.
-  /// Khôi phục phiên bằng refresh token đã lưu sau khi xác thực thiết bị thành công.
+  // GIỮ NGUYÊN TOÀN BỘ LOGIC XỬ LÝ KHÔNG ĐỔI
   Future<void> _handleBiometricLogin() async {
     setState(() {
       _busy = true;
@@ -88,6 +114,13 @@ class _AuthPageState extends State<AuthPage> {
       }
 
       await widget.controller.loginWithRefreshToken(refresh);
+      final access = await SessionStorage.getAccessToken() ?? '';
+      await SessionStorage.saveSession(
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: DateTime.now().add(const Duration(days: 7)),
+        rememberMe: true,
+      );
     } catch (e) {
       final expired =
           e is ApiException && (e.statusCode == 400 || e.statusCode == 401);
@@ -160,7 +193,6 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  // Xử lý gửi Đăng nhập Bước 1
   Future<void> _handleLogin() async {
     final uname = _loginUsername.text.trim();
     final pass = _loginPassword.text;
@@ -177,6 +209,39 @@ class _AuthPageState extends State<AuthPage> {
     });
 
     try {
+      // 4 & 5. Kiểm tra nếu thiết bị đã là thiết bị tin cậy
+      final deviceId = await SessionStorage.getDeviceId();
+      final isTrusted = await SessionStorage.isDeviceTrusted(uname, deviceId);
+
+      // Nếu thiết bị đã tin cậy và có phiên refresh token hợp lệ -> vào thẳng, bỏ qua OTP
+      if (isTrusted && widget.controller.client.hasTokens) {
+        try {
+          final refresh = widget.controller.client.refreshToken;
+          if (refresh != null) {
+            await widget.controller.loginWithRefreshToken(refresh);
+      final access = await SessionStorage.getAccessToken() ?? '';
+      await SessionStorage.saveSession(
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: DateTime.now().add(const Duration(days: 7)),
+        rememberMe: true,
+      );
+            if (widget.controller.user != null) {
+              final access = await SessionStorage.getAccessToken() ?? '';
+              await SessionStorage.saveSession(
+                accessToken: access,
+                refreshToken: refresh,
+                expiresAt: DateTime.now().add(const Duration(days: 7)),
+                rememberMe: _rememberMe,
+              );
+              return;
+            }
+          }
+        } catch (_) {
+          // Phiên đã hết hạn -> tiếp tục đăng nhập mật khẩu + xác minh thiết bị
+        }
+      }
+
       await widget.controller.beginLogin(uname, pass);
       if (mounted) {
         setState(() {
@@ -197,7 +262,6 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  // Xử lý gửi Đăng ký
   Future<void> _handleRegister() async {
     final name = _regName.text.trim();
     final email = _regEmail.text.trim();
@@ -254,7 +318,6 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  // Xử lý xác nhận mã OTP
   Future<void> _handleVerifyOtp() async {
     final code = _otpController.text.trim();
     if (code.length != 6) {
@@ -269,12 +332,11 @@ class _AuthPageState extends State<AuthPage> {
 
     try {
       if (_otpPurpose == 'register') {
-        // Xác thực email đăng ký
         await widget.controller.verifyEmail(code);
         if (mounted) {
           setState(() {
             _otpStep = false;
-            _activeTab = 0; // Chuyển về tab Đăng nhập
+            _activeTab = 0;
             _loginUsername.text = _targetUsername ?? '';
             _loginPassword.clear();
             _otpController.clear();
@@ -286,8 +348,22 @@ class _AuthPageState extends State<AuthPage> {
           );
         }
       } else {
-        // Xác thực OTP đăng nhập
         await widget.controller.verifyOtp(code);
+
+        // 5. Sau khi xác minh OTP lần đầu thành công -> lưu deviceId vào danh sách thiết bị tin cậy
+        final uname = _targetUsername ?? _loginUsername.text.trim();
+        final deviceId = await SessionStorage.getDeviceId();
+        await SessionStorage.markDeviceTrusted(uname, deviceId);
+
+        // 1 & 6. Lưu token phiên và hạn dùng theo công tắc "Ghi nhớ đăng nhập"
+        final refresh = widget.controller.client.refreshToken ?? '';
+        final access = await SessionStorage.getAccessToken() ?? '';
+        await SessionStorage.saveSession(
+          accessToken: access,
+          refreshToken: refresh,
+          expiresAt: DateTime.now().add(const Duration(days: 7)),
+          rememberMe: _rememberMe,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -298,7 +374,6 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  // Gửi lại mã OTP
   Future<void> _handleResendOtp() async {
     setState(() {
       _busy = true;
@@ -354,10 +429,43 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
+  // Dialog hướng dẫn Quên mật khẩu
+  void _handleForgotPassword() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline_rounded, color: AuthColors.primary),
+            SizedBox(width: 10),
+            Text('Quên mật khẩu?', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          'Để bảo mật tài khoản chấm công nhân viên, vui lòng liên hệ Bộ phận Nhân sự (HR) hoặc Quản trị viên hệ thống để được cấp lại mật khẩu mới.',
+          style: TextStyle(color: AuthColors.textSecondary, fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AuthColors.primary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Đã hiểu'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================================
+  // GIAO DIỆN CHÍNH
+  // ============================================================================
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final primaryColor = const Color(0xFF087F8C);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
@@ -369,20 +477,18 @@ class _AuthPageState extends State<AuthPage> {
               constraints: const BoxConstraints(maxWidth: 460),
               child: Column(
                 children: [
-                  // Logo & Brand Header
-                  _buildBrandHeader(primaryColor),
+                  // 4. Logo & Brand Header cố định kích thước
+                  _buildBrandHeader(),
                   const SizedBox(height: 20),
 
-                  // Main Interactive Card
+                  // Card Đăng nhập / Đăng ký
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(
-                            0xFF087F8C,
-                          ).withValues(alpha: 0.08),
+                          color: AuthColors.primary.withValues(alpha: 0.08),
                           blurRadius: 24,
                           offset: const Offset(0, 8),
                         ),
@@ -403,20 +509,19 @@ class _AuthPageState extends State<AuthPage> {
                         opacity: anim,
                         child: SlideTransition(
                           position: Tween<Offset>(
-                            begin: const Offset(0, 0.05),
+                            begin: const Offset(0, 0.04),
                             end: Offset.zero,
                           ).animate(anim),
                           child: child,
                         ),
                       ),
                       child: _otpStep
-                          ? _buildOtpView(primaryColor, theme)
-                          : _buildAuthFormsView(primaryColor, theme),
+                          ? _buildOtpView(theme)
+                          : _buildAuthFormsView(theme),
                     ),
                   ),
 
                   const SizedBox(height: 24),
-                  // Footer info
                   _buildFooter(),
                 ],
               ),
@@ -427,43 +532,45 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  // Header thương hiệu chuyên nghiệp
-  Widget _buildBrandHeader(Color primaryColor) {
+  // 4. Header & Logo: Giữ kích thước cố định 72x72, chip trạng thái đồng bộ Teal
+  Widget _buildBrandHeader() {
     return Column(
       children: [
-        Container(
-          width: 76,
-          height: 76,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            boxShadow: [
-              BoxShadow(
-                color: primaryColor.withValues(alpha: 0.28),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: Image.asset(
-              'assets/images/app_logo.png',
-              width: 76,
-              height: 76,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF087F8C), Color(0xFF034047)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+        SizedBox(
+          width: 72,
+          height: 72,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: AuthColors.primary.withValues(alpha: 0.25),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
                 ),
-                child: const Center(
-                  child: Icon(
-                    Icons.access_time_filled_rounded,
-                    color: Colors.white,
-                    size: 40,
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.asset(
+                'assets/images/app_logo.png',
+                width: 72,
+                height: 72,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AuthColors.primary, AuthColors.primaryDark],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.access_time_filled_rounded,
+                      color: Colors.white,
+                      size: 38,
+                    ),
                   ),
                 ),
               ),
@@ -476,8 +583,8 @@ class _AuthPageState extends State<AuthPage> {
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w800,
-            letterSpacing: 1.2,
-            color: Color(0xFF1E293B),
+            letterSpacing: 1.1,
+            color: AuthColors.textPrimary,
           ),
         ),
         const SizedBox(height: 4),
@@ -485,37 +592,30 @@ class _AuthPageState extends State<AuthPage> {
           'Hệ thống quản lý điểm danh & ca làm việc',
           style: TextStyle(
             fontSize: 13,
-            color: Color(0xFF64748B),
+            color: AuthColors.textSecondary,
             fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 14),
-        // Live server indicator pill
+        const SizedBox(height: 12),
+        // 1. Chip trạng thái đồng nhất màu teal
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F5E9),
+            color: AuthColors.primaryLight,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFA5D6A7), width: 1),
+            border: Border.all(color: const Color(0xFFB2E0E6), width: 1),
           ),
-          child: Row(
+          child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF2E7D32),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'CHẤM CÔNG NHÂN VIÊN',
+              ContainerDot(color: AuthColors.primary),
+              SizedBox(width: 8),
+              Text(
+                'CỔNG NHÂN VIÊN • CHẤM CÔNG',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF1B5E20),
+                  color: AuthColors.primary,
                   letterSpacing: 0.5,
                 ),
               ),
@@ -527,17 +627,17 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   // Khối Form chuyển đổi giữa Đăng nhập và Đăng ký
-  Widget _buildAuthFormsView(Color primaryColor, ThemeData theme) {
+  Widget _buildAuthFormsView(ThemeData theme) {
     return Column(
       key: const ValueKey('auth_forms'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Tab Switcher Hiện Đại (Đăng nhập / Đăng ký)
+        // Tab Switcher
         Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
             color: const Color(0xFFF1F5F9),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
             children: [
@@ -546,7 +646,6 @@ class _AuthPageState extends State<AuthPage> {
                   title: 'Đăng nhập',
                   index: 0,
                   icon: Icons.login_rounded,
-                  primaryColor: primaryColor,
                 ),
               ),
               Expanded(
@@ -554,13 +653,12 @@ class _AuthPageState extends State<AuthPage> {
                   title: 'Đăng ký',
                   index: 1,
                   icon: Icons.person_add_alt_1_rounded,
-                  primaryColor: primaryColor,
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 22),
 
         // Error Banner
         if (_error != null) ...[
@@ -569,10 +667,7 @@ class _AuthPageState extends State<AuthPage> {
         ],
 
         // Nội dung theo Tab
-        if (_activeTab == 0)
-          _buildLoginForm(primaryColor)
-        else
-          _buildRegisterForm(primaryColor),
+        if (_activeTab == 0) _buildLoginForm() else _buildRegisterForm(),
       ],
     );
   }
@@ -581,7 +676,6 @@ class _AuthPageState extends State<AuthPage> {
     required String title,
     required int index,
     required IconData icon,
-    required Color primaryColor,
   }) {
     final isSelected = _activeTab == index;
     return GestureDetector(
@@ -598,12 +692,12 @@ class _AuthPageState extends State<AuthPage> {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 8,
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 6,
                     offset: const Offset(0, 2),
                   ),
                 ]
@@ -615,8 +709,8 @@ class _AuthPageState extends State<AuthPage> {
           children: [
             Icon(
               icon,
-              size: 16,
-              color: isSelected ? primaryColor : const Color(0xFF64748B),
+              size: 17,
+              color: isSelected ? AuthColors.primary : AuthColors.iconColor,
             ),
             const SizedBox(width: 6),
             Flexible(
@@ -627,9 +721,7 @@ class _AuthPageState extends State<AuthPage> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                  color: isSelected
-                      ? const Color(0xFF1E293B)
-                      : const Color(0xFF64748B),
+                  color: isSelected ? AuthColors.textPrimary : AuthColors.textSecondary,
                 ),
               ),
             ),
@@ -639,83 +731,102 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
+  // ============================================================================
   // FORM ĐĂNG NHẬP
-  Widget _buildLoginForm(Color primaryColor) {
+  // ============================================================================
+  Widget _buildLoginForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
+        // 2. Ô Tên đăng nhập dùng style thống nhất
+        _buildInputField(
           controller: _loginUsername,
-          autofillHints: const [AutofillHints.username],
+          label: 'Tên đăng nhập',
+          hint: 'Nhập tên tài khoản hoặc mã nhân viên',
+          icon: Icons.person_outline_rounded,
           textInputAction: TextInputAction.next,
-          enabled: !_busy,
-          onChanged: (_) => _clearErrors(),
-          decoration: InputDecoration(
-            labelText: 'Tên đăng nhập',
-            hintText: 'Nhập tên tài khoản hoặc mã nhân viên',
-            prefixIcon: const Icon(Icons.person_outline_rounded),
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          autofillHints: const [AutofillHints.username],
+        ),
+        const SizedBox(height: 16),
+
+        // 2. Ô Mật khẩu dùng style thống nhất
+        _buildInputField(
+          controller: _loginPassword,
+          label: 'Mật khẩu',
+          hint: 'Nhập mật khẩu',
+          icon: Icons.lock_outline_rounded,
+          obscureText: _obscureLoginPass,
+          autofillHints: const [AutofillHints.password],
+          suffixIcon: IconButton(
+            onPressed: () => setState(() => _obscureLoginPass = !_obscureLoginPass),
+            icon: Icon(
+              _obscureLoginPass
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              color: AuthColors.iconColor,
+              size: 20,
             ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(color: primaryColor, width: 1.5),
-            ),
+          ),
+        ),
+
+        // 6. Công tắc "Ghi nhớ đăng nhập" (mặc định bật) và link "Quên mật khẩu?"
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Row(
+            children: [
+              SizedBox(
+                height: 20,
+                width: 20,
+                child: Checkbox(
+                  value: _rememberMe,
+                  activeColor: AuthColors.primary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                  side: const BorderSide(color: Color(0xFF94A3B8), width: 1.5),
+                  onChanged: _busy ? null : (v) => setState(() => _rememberMe = v ?? true),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _busy ? null : () => setState(() => _rememberMe = !_rememberMe),
+                child: const Text(
+                  'Ghi nhớ đăng nhập',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AuthColors.textSecondary,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _busy ? null : _handleForgotPassword,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: AuthColors.primary,
+                ),
+                child: const Text(
+                  'Quên mật khẩu?',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AuthColors.primary,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: _loginPassword,
-          autofillHints: const [AutofillHints.password],
-          enabled: !_busy,
-          autocorrect: false,
-          enableSuggestions: false,
-          obscureText: _obscureLoginPass,
-          onChanged: (_) => _clearErrors(),
-          decoration: InputDecoration(
-            labelText: 'Mật khẩu',
-            hintText: 'Nhập mật khẩu',
-            prefixIcon: const Icon(Icons.lock_outline_rounded),
-            suffixIcon: IconButton(
-              onPressed: () =>
-                  setState(() => _obscureLoginPass = !_obscureLoginPass),
-              icon: Icon(
-                _obscureLoginPass
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                color: const Color(0xFF94A3B8),
-              ),
-            ),
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide(color: primaryColor, width: 1.5),
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
+
+        // 3 & 5. Nút chính Teal đặc + Trạng thái loading
         SizedBox(
-          height: 52,
+          height: 50,
           child: ElevatedButton(
             onPressed: _busy ? null : _handleLogin,
             style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
+              backgroundColor: AuthColors.primary,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -737,7 +848,7 @@ class _AuthPageState extends State<AuthPage> {
                       Text(
                         'Đăng nhập',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -747,131 +858,149 @@ class _AuthPageState extends State<AuthPage> {
                   ),
           ),
         ),
-        const SizedBox(height: 14),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _handleFaceLogin,
-          icon: const Icon(Icons.face_retouching_natural),
-          label: const Text('Camera khuôn mặt + OTP'),
-        ),
-        const SizedBox(height: 8),
-        // Native device biometrics remain a separate optional shortcut.
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _handleBiometricLogin,
-          icon: const Icon(Icons.fingerprint_rounded, size: 22),
-          label: const Text('Sinh trắc của điện thoại'),
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            foregroundColor: primaryColor,
-            side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
+
+        // 3. Đường ngăn cách "hoặc"
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 18),
+          child: Row(
+            children: [
+              Expanded(child: Divider(color: Color(0xFFE2E8F0), thickness: 1)),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'hoặc đăng nhập nhanh',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AuthColors.textMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Expanded(child: Divider(color: Color(0xFFE2E8F0), thickness: 1)),
+            ],
           ),
+        ),
+
+        // 3. Hai nút phụ cùng 1 kiểu (viền xám nhạt, chữ/icon teal)
+        _buildSecondaryButton(
+          title: 'Camera khuôn mặt + OTP',
+          icon: Icons.camera_alt_outlined,
+          onPressed: _busy ? null : _handleFaceLogin,
+        ),
+        const SizedBox(height: 10),
+        _buildSecondaryButton(
+          title: 'Sinh trắc của điện thoại',
+          icon: Icons.fingerprint_rounded,
+          onPressed: _busy ? null : _handleBiometricLogin,
         ),
       ],
     );
   }
 
+  // ============================================================================
   // FORM ĐĂNG KÝ
-  Widget _buildRegisterForm(Color primaryColor) {
+  // ============================================================================
+  Widget _buildRegisterForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
+        // Ô 1: Họ tên (cùng nền & style với các ô khác, không bị xám đậm)
+        _buildInputField(
           controller: _regName,
-          enabled: !_busy,
+          label: 'Họ và tên nhân viên',
+          hint: 'Ví dụ: Nguyễn Văn An',
+          icon: Icons.badge_outlined,
           textInputAction: TextInputAction.next,
-          onChanged: (_) => _clearErrors(),
-          decoration: _inputDecoration(
-            'Họ và tên nhân viên',
-            'Ví dụ: Nguyễn Văn An',
-            Icons.badge_outlined,
-            primaryColor,
-          ),
         ),
         const SizedBox(height: 14),
-        TextField(
+
+        _buildInputField(
           controller: _regEmail,
-          enabled: !_busy,
+          label: 'Email nhận mã OTP',
+          hint: 'Ví dụ: an.nguyen@gmail.com',
+          icon: Icons.mail_outline_rounded,
           textInputAction: TextInputAction.next,
           keyboardType: TextInputType.emailAddress,
-          onChanged: (_) => _clearErrors(),
-          decoration: _inputDecoration(
-            'Email nhận mã OTP',
-            'Ví dụ: an.nguyen@gmail.com',
-            Icons.email_outlined,
-            primaryColor,
-          ),
         ),
         const SizedBox(height: 14),
-        TextField(
+
+        _buildInputField(
           controller: _regUsername,
-          enabled: !_busy,
+          label: 'Tên đăng nhập',
+          hint: 'Ví dụ: an_nv25',
+          icon: Icons.account_circle_outlined,
           textInputAction: TextInputAction.next,
-          onChanged: (_) => _clearErrors(),
-          decoration: _inputDecoration(
-            'Tên đăng nhập',
-            'Ví dụ: an_nv25',
-            Icons.account_circle_outlined,
-            primaryColor,
-          ),
         ),
         const SizedBox(height: 14),
-        TextField(
+
+        // Ô Mật khẩu + Gợi ý quy tắc mật khẩu
+        _buildInputField(
           controller: _regPassword,
-          enabled: !_busy,
-          textInputAction: TextInputAction.next,
+          label: 'Mật khẩu',
+          hint: 'Tối thiểu 8 ký tự',
+          icon: Icons.lock_outline_rounded,
           obscureText: _obscureRegPass,
-          onChanged: (_) => _clearErrors(),
-          decoration: _inputDecoration(
-            'Mật khẩu',
-            'Tối thiểu 8 ký tự',
-            Icons.lock_outline_rounded,
-            primaryColor,
-            suffixIcon: IconButton(
-              onPressed: () =>
-                  setState(() => _obscureRegPass = !_obscureRegPass),
-              icon: Icon(
-                _obscureRegPass
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                color: const Color(0xFF94A3B8),
-              ),
+          textInputAction: TextInputAction.next,
+          suffixIcon: IconButton(
+            onPressed: () => setState(() => _obscureRegPass = !_obscureRegPass),
+            icon: Icon(
+              _obscureRegPass
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              color: AuthColors.iconColor,
+              size: 20,
             ),
+          ),
+        ),
+        // 5. Gợi ý quy tắc mật khẩu ở màn đăng ký
+        const Padding(
+          padding: EdgeInsets.only(top: 6, left: 4),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 14, color: AuthColors.textMuted),
+              SizedBox(width: 6),
+              Text(
+                'Mật khẩu tối thiểu 8 ký tự (nên gồm chữ và số)',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AuthColors.textSecondary,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 14),
-        TextField(
+
+        _buildInputField(
           controller: _regConfirmPassword,
-          enabled: !_busy,
-          textInputAction: TextInputAction.next,
+          label: 'Xác nhận mật khẩu',
+          hint: 'Nhập lại mật khẩu ở trên',
+          icon: Icons.lock_reset_rounded,
           obscureText: _obscureRegConfirmPass,
-          onChanged: (_) => _clearErrors(),
-          decoration: _inputDecoration(
-            'Xác nhận mật khẩu',
-            'Nhập lại mật khẩu ở trên',
-            Icons.lock_reset_rounded,
-            primaryColor,
-            suffixIcon: IconButton(
-              onPressed: () => setState(
-                () => _obscureRegConfirmPass = !_obscureRegConfirmPass,
-              ),
-              icon: Icon(
-                _obscureRegConfirmPass
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                color: const Color(0xFF94A3B8),
-              ),
+          textInputAction: TextInputAction.done,
+          suffixIcon: IconButton(
+            onPressed: () => setState(
+              () => _obscureRegConfirmPass = !_obscureRegConfirmPass,
+            ),
+            icon: Icon(
+              _obscureRegConfirmPass
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              color: AuthColors.iconColor,
+              size: 20,
             ),
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 22),
+
+        // 5. Nút Đăng ký + Trạng thái loading
         SizedBox(
-          height: 52,
+          height: 50,
           child: ElevatedButton(
             onPressed: _busy ? null : _handleRegister,
             style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
+              backgroundColor: AuthColors.primary,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -907,8 +1036,114 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  // MÀN HÌNH NHẬP MÃ OTP HIỆN ĐẠI
-  Widget _buildOtpView(Color primaryColor, ThemeData theme) {
+  // ============================================================================
+  // WIDGET HELPER: 2. STYLE Ô NHẬP LIỆU CHUẨN DÙNG CHUNG
+  // ============================================================================
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    bool obscureText = false,
+    TextInputAction? textInputAction,
+    TextInputType? keyboardType,
+    Iterable<String>? autofillHints,
+    Widget? suffixIcon,
+  }) {
+    return TextField(
+      controller: controller,
+      enabled: !_busy,
+      obscureText: obscureText,
+      textInputAction: textInputAction,
+      keyboardType: keyboardType,
+      autofillHints: autofillHints,
+      onChanged: (_) => _clearErrors(),
+      style: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: AuthColors.textPrimary,
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        hintStyle: const TextStyle(
+          color: Color(0xFF94A3B8),
+          fontSize: 13,
+          fontWeight: FontWeight.w400,
+        ),
+        labelStyle: const TextStyle(
+          color: AuthColors.textSecondary,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        floatingLabelStyle: const TextStyle(
+          color: AuthColors.primary,
+          fontWeight: FontWeight.w600,
+        ),
+        prefixIcon: Icon(icon, color: AuthColors.iconColor, size: 20),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: AuthColors.inputFill, // Nền đồng nhất cho toàn bộ các ô
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        // Viền bình thường rõ hơn
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AuthColors.inputBorder, width: 1.2),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AuthColors.inputBorder, width: 1.2),
+        ),
+        // Viền Teal khi focus
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AuthColors.primaryFocusBorder, width: 1.8),
+        ),
+        // Viền Đỏ khi lỗi
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AuthColors.inputBorderError, width: 1.4),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AuthColors.inputBorderError, width: 1.8),
+        ),
+      ),
+    );
+  }
+
+  // 3. Widget nút phụ: viền xám nhạt (inputBorder), chữ và icon Teal đồng nhất
+  Widget _buildSecondaryButton({
+    required String title,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 20, color: AuthColors.primary),
+      label: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: AuthColors.primary,
+        ),
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        side: const BorderSide(color: AuthColors.inputBorder, width: 1.2),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================================
+  // MÀN HÌNH NHẬP MÃ OTP
+  // ============================================================================
+  Widget _buildOtpView(ThemeData theme) {
     final isRegister = _otpPurpose == 'register';
 
     return Column(
@@ -920,13 +1155,13 @@ class _AuthPageState extends State<AuthPage> {
             width: 60,
             height: 60,
             decoration: BoxDecoration(
-              color: primaryColor.withValues(alpha: 0.1),
+              color: AuthColors.primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: Icon(
+            child: const Icon(
               Icons.mark_email_read_outlined,
-              color: primaryColor,
-              size: 32,
+              color: AuthColors.primary,
+              size: 30,
             ),
           ),
         ),
@@ -937,7 +1172,7 @@ class _AuthPageState extends State<AuthPage> {
           style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w800,
-            color: Color(0xFF1E293B),
+            color: AuthColors.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
@@ -945,10 +1180,10 @@ class _AuthPageState extends State<AuthPage> {
           isRegister
               ? 'Mã OTP gồm 6 số đã được gửi đến email:'
               : _faceLoginFlow
-              ? 'Khuôn mặt khớp. Mã OTP 6 số đã gửi đến email đăng ký của tài khoản này (không gửi theo Gmail đang mở trên máy):'
+              ? 'Khuôn mặt khớp. Mã OTP 6 số đã gửi đến email đăng ký của tài khoản này:'
               : 'Vui lòng nhập mã OTP 6 số gửi đến email đã đăng ký của tài khoản:',
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+          style: const TextStyle(fontSize: 13, color: AuthColors.textSecondary),
         ),
         const SizedBox(height: 6),
         if (_targetEmail != null && _targetEmail!.isNotEmpty)
@@ -956,17 +1191,17 @@ class _AuthPageState extends State<AuthPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: AuthColors.primaryLight,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
                 _targetEmail!,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: primaryColor,
+                  color: AuthColors.primary,
                 ),
               ),
             ),
@@ -976,37 +1211,36 @@ class _AuthPageState extends State<AuthPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: AuthColors.primaryLight,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
                 'Tài khoản: $_targetUsername',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: primaryColor,
+                  color: AuthColors.primary,
                 ),
               ),
             ),
           ),
         const SizedBox(height: 20),
 
-        // Error Banner nếu có lỗi
         if (_error != null) ...[
           _buildErrorBanner(),
           const SizedBox(height: 16),
         ],
 
-        // Ô Nhập OTP Định Dạng Số Lớn Sang Trọng
+        // Ô Nhập OTP
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
+            color: AuthColors.inputFill,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: _error != null
-                  ? const Color(0xFFEF4444)
-                  : primaryColor.withValues(alpha: 0.4),
+                  ? AuthColors.inputBorderError
+                  : AuthColors.primary.withValues(alpha: 0.4),
               width: 1.5,
             ),
           ),
@@ -1020,7 +1254,7 @@ class _AuthPageState extends State<AuthPage> {
               fontSize: 26,
               fontWeight: FontWeight.w800,
               letterSpacing: 10,
-              color: Color(0xFF0F172A),
+              color: AuthColors.textPrimary,
             ),
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
@@ -1044,17 +1278,16 @@ class _AuthPageState extends State<AuthPage> {
         const Text(
           'Mã có hiệu lực trong 5 phút. Hãy kiểm tra cả hộp thư Spam.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+          style: TextStyle(fontSize: 12, color: AuthColors.textMuted),
         ),
         const SizedBox(height: 24),
 
-        // Nút Xác nhận
         SizedBox(
-          height: 52,
+          height: 50,
           child: ElevatedButton(
             onPressed: _busy ? null : _handleVerifyOtp,
             style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
+              backgroundColor: AuthColors.primary,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -1102,7 +1335,7 @@ class _AuthPageState extends State<AuthPage> {
               icon: const Icon(Icons.arrow_back_rounded, size: 16),
               label: const Text('Quay lại'),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF64748B),
+                foregroundColor: AuthColors.textSecondary,
               ),
             ),
             TextButton.icon(
@@ -1110,7 +1343,7 @@ class _AuthPageState extends State<AuthPage> {
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('Gửi lại mã OTP'),
               style: TextButton.styleFrom(
-                foregroundColor: primaryColor,
+                foregroundColor: AuthColors.primary,
                 textStyle: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
@@ -1120,7 +1353,7 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  // Khối hiển thị thông báo lỗi đẹp
+  // Khối thông báo lỗi
   Widget _buildErrorBanner() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1135,7 +1368,7 @@ class _AuthPageState extends State<AuthPage> {
           const Icon(
             Icons.error_outline_rounded,
             size: 20,
-            color: Color(0xFFDC2626),
+            color: AuthColors.error,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1153,43 +1386,14 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  InputDecoration _inputDecoration(
-    String label,
-    String hint,
-    IconData prefixIcon,
-    Color primaryColor, {
-    Widget? suffixIcon,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(prefixIcon),
-      suffixIcon: suffixIcon,
-      filled: true,
-      fillColor: const Color(0xFFF8FAFC),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: primaryColor, width: 1.5),
-      ),
-    );
-  }
-
   Widget _buildFooter() {
     return const Column(
       children: [
         Text(
-          'Đồ án môn học • Lập trình di động',
+          'Lập trình di động',
           style: TextStyle(
             fontSize: 12,
-            color: Color(0xFF64748B),
+            color: AuthColors.textSecondary,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -1198,11 +1402,29 @@ class _AuthPageState extends State<AuthPage> {
           'Nhóm 09 — Tống Nhật Bảo An',
           style: TextStyle(
             fontSize: 12,
-            color: Color(0xFF94A3B8),
+            color: AuthColors.textMuted,
             fontWeight: FontWeight.w500,
           ),
         ),
       ],
+    );
+  }
+}
+
+// Widget chấm tròn nhỏ cho chip trạng thái
+class ContainerDot extends StatelessWidget {
+  final Color color;
+  const ContainerDot({super.key, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+      ),
     );
   }
 }

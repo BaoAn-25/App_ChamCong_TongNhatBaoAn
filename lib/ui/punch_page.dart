@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../app_config.dart';
 import '../domain/app_controller.dart';
 import '../domain/models.dart';
 import '../data/face_service.dart';
 import '../data/api_client.dart';
+import 'biometric_page.dart';
 import 'face_camera_page.dart';
 import 'face_page.dart';
 import 'common.dart';
@@ -29,6 +31,12 @@ class _PunchPageState extends State<PunchPage> {
   String? scannedQr;
   int step = -1;
   final done = <int>{};
+
+  // State hỗ trợ flow tối ưu
+  bool _gpsChecking = false;
+  bool _gpsValid = false;
+  int _faceFailCount = 0;
+
   AppController get c => widget.controller;
   List<Shift> get shifts {
     final items = [...c.data.shifts]
@@ -40,6 +48,7 @@ class _PunchPageState extends State<PunchPage> {
       shifts.where((s) => s.id == c.user?.shiftId).firstOrNull;
   Shift? get shift =>
       shifts.where((s) => s.id == selectedShiftId).firstOrNull ?? assignedShift;
+
   List<Attendance> get history =>
       c.data.attendance
           .where(
@@ -52,6 +61,7 @@ class _PunchPageState extends State<PunchPage> {
           )
           .toList()
         ..sort((a, b) => b.checkIn.compareTo(a.checkIn));
+
   Attendance? get current {
     if (c.openAttendance != null) return c.openAttendance;
     final s = shift;
@@ -76,6 +86,10 @@ class _PunchPageState extends State<PunchPage> {
     selectedShiftId = c.user?.shiftId;
     c.addListener(_changed);
     _loadFace();
+    // 2. GPS tự động chạy ngay khi mở màn chấm công
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _autoCheckGps();
+    });
   }
 
   @override
@@ -122,9 +136,45 @@ class _PunchPageState extends State<PunchPage> {
         ),
       ),
     );
-    if (mounted) await _loadFace();
+    if (mounted) {
+      await _loadFace();
+      if (mounted) setState(() {});
+    }
   }
 
+  // 2 & 7. Tự động kiểm tra GPS khi vào màn hình hoặc bấm nút làm mới nhỏ
+  Future<void> _autoCheckGps({bool force = false}) async {
+    if (_gpsChecking) return;
+    setState(() {
+      _gpsChecking = true;
+      error = null;
+    });
+    try {
+      await _gps(force: force);
+      if (mounted) {
+        setState(() {
+          _gpsValid = true;
+          done.add(0); // Bước 1: GPS hoàn tất
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        final message = e.toString().replaceFirst(
+          RegExp(r'^(Exception: |StateError: |Bad state: )'),
+          '',
+        );
+        setState(() {
+          _gpsValid = false;
+          done.remove(0);
+          error = message;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _gpsChecking = false);
+    }
+  }
+
+  // 7. Lấy GPS với thông báo lỗi cụ thể, rõ lý do
   Future<Position> _gps({bool force = false}) async {
     final cached = _freshGps;
     final cachedAt = _freshGpsAt;
@@ -134,11 +184,30 @@ class _PunchPageState extends State<PunchPage> {
         DateTime.now().difference(cachedAt) < const Duration(seconds: 40)) {
       return cached;
     }
-    final p = await acquirePosition();
+
+    Position p;
+    try {
+      p = await acquirePosition();
+    } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('permission') || msg.contains('denied')) {
+        throw StateError(
+          'Chưa cấp quyền truy cập vị trí. Hãy bật quyền GPS trong Cài đặt máy.',
+        );
+      } else if (msg.contains('disabled') || msg.contains('service')) {
+        throw StateError(
+          'Chưa bật GPS trên điện thoại. Vui lòng bật định vị vị trí (Location).',
+        );
+      }
+      throw StateError(
+        'Không thể lấy tọa độ GPS: ${e.toString().replaceFirst(RegExp(r'^(Exception: |StateError: )'), '')}',
+      );
+    }
+
     if (!mounted) throw StateError('Đã rời màn chấm công.');
     final office = c.data.office;
     if (!office.configured) {
-      throw StateError('Văn phòng chưa được cấu hình. Liên hệ Admin.');
+      throw StateError('Văn phòng chưa được cấu hình tọa độ. Vui lòng liên hệ Admin.');
     }
     final distance = Geolocator.distanceBetween(
       p.latitude,
@@ -148,23 +217,21 @@ class _PunchPageState extends State<PunchPage> {
     );
     setState(
       () => gpsDetail =
-          'Cách văn phòng ${distance.round()} m • Sai số ±${p.accuracy.round()} m',
+          'Cách văn phòng ${distance.round()} m • Bán kính cho phép ${office.radius.round()} m • Sai số ±${p.accuracy.round()} m',
     );
     if (p.isMocked) {
       throw StateError(
-        'Vị trí giả không được chấp nhận. Hãy tắt ứng dụng giả lập GPS.',
+        'Vị trí giả (Fake GPS) không được chấp nhận. Vui lòng tắt ứng dụng giả lập GPS.',
       );
     }
     if (!p.accuracy.isFinite || p.accuracy < 0 || p.accuracy > 80) {
       throw StateError(
-        'GPS yếu (sai số vượt 80 m). Hãy đến nơi thoáng và thử lại.',
+        'GPS quá yếu (sai số ±${p.accuracy.round()} m > cho phép 80 m). Hãy ra nơi thoáng và thử lại.',
       );
     }
     if (distance > office.radius) {
       throw StateError(
-        distance > 2000
-            ? 'Bạn cách điểm văn phòng trên hệ thống ${distance.round()} m. Tọa độ đang lưu rất lệch chỗ bạn đứng. Admin hãy mở QR văn phòng → Cấu hình → Lấy GPS tại chỗ làm thật, rồi thử lại.'
-            : 'Ngoài bán kính văn phòng. Cần đến gần thêm ${(distance - office.radius).ceil()} m.',
+        'Bạn đang cách văn phòng ${distance.round()} m (cho phép ${office.radius.round()} m). Cần di chuyển vào gần hơn ${(distance - office.radius).ceil()} m.',
       );
     }
     _freshGps = p;
@@ -188,7 +255,8 @@ class _PunchPageState extends State<PunchPage> {
     });
   }
 
-  Future<void> _run() async {
+  // 4 & 6. Flow chấm công mới: Bấm nút -> Quét mặt -> Tự động ghi nhận (tối đa 2 chạm)
+  Future<void> _run({bool useBiometricFallback = false}) async {
     if (busy) return;
     setState(() {
       busy = true;
@@ -198,7 +266,6 @@ class _PunchPageState extends State<PunchPage> {
       step = -1;
     });
     try {
-      // Refresh before choosing in/out, also reconciling an uncertain prior request.
       await c.syncAll();
       if (!mounted) return;
       if (c.syncError != null || c.isSyncing) {
@@ -224,35 +291,59 @@ class _PunchPageState extends State<PunchPage> {
       }
       final checkingOut = c.openAttendance != null;
       final openId = c.openAttendance?.id;
+
+      // Bước 1: Kiểm tra vị trí GPS
       setState(() => step = 0);
       var p = await _gps();
       if (!mounted) return;
       setState(() {
         done.add(0);
-        step = 1;
+        _gpsValid = true;
       });
-      var qr = scannedQr;
-      if (qr == null || qr.isEmpty) {
-        qr = await Navigator.push<String>(
-          context,
-          MaterialPageRoute(builder: (_) => const ScannerPage()),
-        );
+
+      // 1. Nếu requireQr = true thì mới yêu cầu quét QR văn phòng
+      if (AppConfig.requireQr) {
+        setState(() => step = 1);
+        var qr = scannedQr;
+        if (qr == null || qr.isEmpty) {
+          qr = await Navigator.push<String>(
+            context,
+            MaterialPageRoute(builder: (_) => const ScannerPage()),
+          );
+        }
+        if (!mounted) return;
+        if (qr == null || qr.trim().isEmpty) {
+          throw StateError('Hãy bấm Quét QR nơi làm việc, rồi chấm công.');
+        }
+        scannedQr = qr.trim();
+        setState(() => done.add(1));
       }
-      if (!mounted) return;
-      if (qr == null || qr.trim().isEmpty) {
-        throw StateError('Hãy bấm Quét QR nơi làm việc, rồi chấm công.');
-      }
-      scannedQr = qr.trim();
-      setState(() {
-        done.add(1);
-        step = 2;
-      });
-      final faces = FaceService(c.client);
-      final hasFace = await faces.status();
-      if (!mounted) return;
-      setState(() => enrolled = hasFace);
+
+      // Bước 2: Xác thực khuôn mặt (Bắt buộc) hoặc vân tay dự phòng
+      final faceStepIndex = AppConfig.requireQr ? 2 : 1;
+      setState(() => step = faceStepIndex);
+
       String? proof;
-      if (hasFace) {
+      if (useBiometricFallback) {
+        // 6. Phương án dự phòng: Vân tay điện thoại
+        final bioAuthed = await BiometricLoginHelper.authenticate();
+        if (!bioAuthed) {
+          throw StateError('Xác thực vân tay không thành công hoặc đã bị hủy.');
+        }
+        proof = 'biometric_fallback';
+      } else {
+        // 5. Khuôn mặt là bắt buộc
+        final faces = FaceService(c.client);
+        final hasFace = await faces.status();
+        if (!mounted) return;
+        setState(() => enrolled = hasFace);
+
+        if (!hasFace) {
+          throw StateError(
+            'Bạn chưa đăng ký khuôn mặt. Vui lòng vào mục Tài khoản để đăng ký trước khi chấm công.',
+          );
+        }
+
         proof = await showFaceCamera<String>(
           context,
           title: checkingOut
@@ -263,31 +354,40 @@ class _PunchPageState extends State<PunchPage> {
         );
         if (!mounted) return;
         if (proof == null) {
-          throw StateError('Đã hủy xác thực khuôn mặt. Hãy thử lại.');
+          _faceFailCount++;
+          throw StateError(
+            'Khuôn mặt không khớp hoặc bạn đã hủy xác thực. Hãy thử lại.',
+          );
         }
       }
+
       if (!mounted) return;
       setState(() {
-        done.add(2);
-        step = 0;
-        done.remove(0);
+        done.add(faceStepIndex);
       });
+
+      // Kiểm tra lại GPS tươi trước khi ghi nhận
       final gpsAge = _freshGpsAt == null
           ? const Duration(days: 1)
           : DateTime.now().difference(_freshGpsAt!);
       p = await _gps(force: gpsAge > const Duration(seconds: 40));
       if (!mounted) return;
-      setState(() {
-        done.add(0);
-        step = 3;
-      });
+
+      // Bước 3: Tự động gửi và ghi nhận giờ (không bắt bấm thêm nút)
+      final submitStepIndex = AppConfig.requireQr ? 3 : 2;
+      setState(() => step = submitStepIndex);
+
       if (c.openAttendance?.id != openId) {
         throw StateError('Trạng thái ca đã thay đổi. Hãy thử lại.');
       }
       reconcile = true;
       final office = c.data.office;
+
+      // 2. Nếu requireQr = false thì không đính kèm mã QR
+      final String? qrPayload = AppConfig.requireQr ? scannedQr?.trim() : null;
+
       await c.punch(
-        qr: scannedQr!.trim(),
+        qr: qrPayload,
         shiftId: checkingOut ? null : shift?.id,
         faceProof: proof,
         latitude: p.latitude,
@@ -309,11 +409,12 @@ class _PunchPageState extends State<PunchPage> {
         );
       }
       reconcile = false;
+      _faceFailCount = 0; // Reset số lần fail
       final saved = checkingOut
           ? c.data.attendance.where((a) => a.id == openId).firstOrNull
           : c.openAttendance;
       setState(() {
-        done.add(3);
+        done.add(submitStepIndex);
         scannedQr = null;
         result = saved == null
             ? 'Đã gửi chấm công. Vui lòng kiểm tra lịch sử.'
@@ -324,13 +425,20 @@ class _PunchPageState extends State<PunchPage> {
       if (e is ApiException && e.statusCode >= 400 && e.statusCode < 500) {
         reconcile = false;
       }
-      final message = e.toString().replaceFirst(
+      var message = e.toString().replaceFirst(
         RegExp(r'^(Exception: |StateError: |Bad state: )'),
         '',
       );
+
+      // 3. Thông báo 'QR sai hoặc hết hạn' chỉ hiển thị khi requireQr = true.
+      // Khi requireQr = false, nếu server vẫn báo lỗi QR thì giải thích rõ nguyên nhân do API backend.
+      if (!AppConfig.requireQr && message.toLowerCase().contains('qr')) {
+        message = 'Không thể chấm công: Server API backend vẫn đang bắt buộc kiểm tra mã QR (ValidatePunch). Hãy cập nhật API backend để bỏ qua điều kiện QR.';
+      }
+
       setState(() {
         error = message;
-        if (message.toLowerCase().contains('qr')) {
+        if (message.toLowerCase().contains('qr') && AppConfig.requireQr) {
           step = 1;
           done.remove(1);
         }
@@ -348,15 +456,26 @@ class _PunchPageState extends State<PunchPage> {
     return a.lateMinutes > 0 ? 'Đi trễ ${a.lateMinutes} phút' : 'Đúng giờ';
   }
 
+  // ============================================================================
+  // GIAO DIỆN CHÍNH MÀN CHẤM CÔNG
+  // ============================================================================
   @override
   Widget build(BuildContext context) {
     final a = current;
     final completed = a?.checkOut != null;
     final inOpenShift = c.openAttendance != null;
-    final allowed =
+
+    // 4 & 5. Nút chính CHỈ BẬT khi:
+    // - GPS hợp lệ (_gpsValid == true)
+    // - Đã đăng ký khuôn mặt (enrolled == true)
+    // - Ca hợp lệ và chưa hoàn tất
+    final canPunch =
         (shift != null || inOpenShift) &&
         c.data.office.configured &&
-        !completed;
+        !completed &&
+        _gpsValid &&
+        enrolled == true;
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -376,64 +495,151 @@ class _PunchPageState extends State<PunchPage> {
           },
         ),
         const SizedBox(height: 16),
-        Text(
-          '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m',
-        ),
-        if (!c.data.office.configured)
-          const Text('Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.'),
-        if (gpsDetail != null) Text(gpsDetail!),
-        const SizedBox(height: 8),
-        Text(
-          enrolled == null
-              ? 'Khuôn mặt: chưa kiểm tra được'
-              : enrolled!
-              ? 'Khuôn mặt: đã đăng ký'
-              : 'Khuôn mặt: Chưa đăng ký',
-        ),
-        if (enrolled == false) ...[
-          const Text(
-            'Chưa đăng ký khuôn mặt: chấm công bằng GPS + QR. Đăng ký mẫu nếu muốn khóa chấm hộ bằng mặt.',
+
+        // Khối thông tin văn phòng & Trạng thái GPS
+        Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: Colors.grey.shade300),
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: busy ? null : _account,
-              child: const Text('Mở Tài khoản để đăng ký'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.business_rounded,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m',
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                if (!c.data.office.configured)
+                  const Text(
+                    'Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.',
+                    style: TextStyle(color: Colors.red, fontSize: 13),
+                  ),
+
+                // 2. Trạng thái GPS tự động kèm nút icon làm mới nhỏ bên cạnh
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _gpsValid ? Icons.check_circle_rounded : Icons.location_on_outlined,
+                      size: 18,
+                      color: _gpsValid ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        gpsDetail ??
+                            (_gpsChecking
+                                ? 'Đang tự động kiểm tra vị trí GPS…'
+                                : 'Chưa xác định GPS vị trí hiện tại'),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: _gpsValid ? Colors.green.shade800 : Colors.black87,
+                          fontWeight: _gpsValid ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Lấy lại GPS hiện tại',
+                      icon: _gpsChecking
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 20),
+                      onPressed: busy || _gpsChecking
+                          ? null
+                          : () => _autoCheckGps(force: true),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-        ],
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: busy ? null : _scanWorkplace,
-          icon: const Icon(Icons.qr_code_scanner),
-          label: Text(
-            scannedQr == null
-                ? 'Quét QR nơi làm việc'
-                : 'Đã quét QR • Quét lại',
-          ),
         ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: busy
-              ? null
-              : () async {
-                  setState(() => error = null);
-                  try {
-                    await _gps(force: true);
-                  } catch (e) {
-                    if (!mounted) return;
-                    setState(
-                      () => error = e.toString().replaceFirst(
-                        RegExp(r'^(Exception: |StateError: |Bad state: )'),
-                        '',
+
+        const SizedBox(height: 10),
+
+        // 5. Cảnh báo bắt buộc đăng ký khuôn mặt nếu chưa đăng ký
+        if (enrolled == false) ...[
+          Card(
+            color: const Color(0xFFFEF2F2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: Color(0xFFFECACA)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Bắt buộc đăng ký khuôn mặt',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: Color(0xFF991B1B),
+                        ),
                       ),
-                    );
-                  }
-                },
-          icon: const Icon(Icons.my_location_outlined),
-          label: const Text('Kiểm tra GPS hiện tại'),
-        ),
-        const SizedBox(height: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Để tránh chấm công hộ, hệ thống yêu cầu nhân viên phải đăng ký khuôn mặt trước khi điểm danh. Nút chấm công sẽ được mở sau khi bạn hoàn tất đăng ký.',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF7F1D1D), height: 1.3),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.tonal(
+                    onPressed: busy ? null : _account,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFEE2E2),
+                      foregroundColor: const Color(0xFF991B1B),
+                    ),
+                    child: const Text('Đến màn Đăng ký khuôn mặt ngay'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+
+        // 1. Chỉ hiển thị nút Quét QR khi cờ requireQr = true
+        if (AppConfig.requireQr) ...[
+          OutlinedButton.icon(
+            onPressed: busy ? null : _scanWorkplace,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: Text(
+              scannedQr == null
+                  ? 'Quét QR nơi làm việc'
+                  : 'Đã quét QR • Quét lại',
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // 4. Nút chính "Chấm công vào / ra"
         _PunchButton(
           busy: busy,
           label: completed
@@ -441,22 +647,44 @@ class _PunchPageState extends State<PunchPage> {
               : inOpenShift
               ? 'Chấm công ra'
               : 'Chấm công vào ca đã chọn',
-          onPressed: !busy && allowed ? _run : null,
+          onPressed: !busy && canPunch ? () => _run() : null,
         ),
+
+        // 6. Nút phụ: Dùng vân tay thay thế (khi camera lỗi hoặc thất bại xác thực)
+        if (_faceFailCount >= 1 && (shift != null || inOpenShift) && _gpsValid) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: busy ? null : () => _run(useBiometricFallback: true),
+            icon: const Icon(Icons.fingerprint_rounded, size: 20),
+            label: const Text('Dùng vân tay thay thế (dự phòng)'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              foregroundColor: const Color(0xFF0F7C8A),
+              side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ],
+
         const SizedBox(height: 16),
+
+        // 3. Danh sách các bước: 3 bước khi requireQr = false
         _StepChecklist(
           active: step,
           done: done,
           failed: error != null,
           gpsDetail: gpsDetail,
-          faceRequired: enrolled == true,
+          requireQr: AppConfig.requireQr,
         ),
+
+        // Thông báo lỗi chi tiết
         if (error != null)
           _PunchError(
             message: error!,
-            onRetry: busy ? null : _run,
+            onRetry: busy ? null : () => _run(),
             onAccount: enrolled == false && !busy ? _account : null,
           ),
+
         if (result != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -468,6 +696,7 @@ class _PunchPageState extends State<PunchPage> {
               ),
             ),
           ),
+
         const SizedBox(height: 20),
         Section(
           title: 'Lịch sử chấm công hôm nay',
@@ -517,9 +746,11 @@ class _ShiftPicker extends StatelessWidget {
   Widget build(BuildContext context) => Section(
     title: 'Chọn ca làm',
     subtitle: attendance == null
-        ? 'Bấm vào ca để chọn, rồi quét QR nơi làm việc'
+        ? (AppConfig.requireQr
+            ? 'Bấm vào ca để chọn, rồi quét QR nơi làm việc'
+            : 'Chọn ca làm việc, GPS tự nhận diện vị trí')
         : attendance!.checkOut == null
-        ? 'Đang trong ca • hãy quét QR để chấm ra'
+        ? 'Đang trong ca • bấm nút để chấm công ra'
         : 'Ca này đã hoàn tất',
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -569,43 +800,55 @@ class _PunchButton extends StatelessWidget {
     child: FilledButton.icon(
       onPressed: onPressed,
       style: FilledButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 20),
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        backgroundColor: const Color(0xFF0F7C8A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       icon: busy
           ? const SizedBox(
               width: 22,
               height: 22,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
             )
-          : const Icon(Icons.fingerprint),
-      label: Text(busy ? 'Đang xác minh…' : label),
+          : const Icon(Icons.face_retouching_natural_rounded),
+      label: Text(
+        busy ? 'Đang xử lý…' : label,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      ),
     ),
   );
 }
 
+// 3. Danh sách bước linh hoạt: 3 bước khi requireQr = false, 4 bước khi requireQr = true
 class _StepChecklist extends StatelessWidget {
   final int active;
   final Set<int> done;
   final bool failed;
-  final bool faceRequired;
+  final bool requireQr;
   final String? gpsDetail;
   const _StepChecklist({
     required this.active,
     required this.done,
     required this.failed,
-    required this.faceRequired,
+    required this.requireQr,
     this.gpsDetail,
   });
+
   @override
   Widget build(BuildContext context) {
-    final labels = [
-      'Kiểm tra vị trí GPS',
-      'Quét QR văn phòng',
-      faceRequired
-          ? 'Xác thực khuôn mặt'
-          : 'Khuôn mặt (bỏ qua nếu chưa đăng ký)',
-      'Gửi và ghi nhận giờ',
-    ];
+    final labels = requireQr
+        ? [
+            'Kiểm tra vị trí GPS',
+            'Quét QR văn phòng',
+            'Xác thực khuôn mặt',
+            'Gửi và ghi nhận giờ',
+          ]
+        : [
+            'Kiểm tra vị trí GPS',
+            'Xác thực khuôn mặt',
+            'Gửi và ghi nhận giờ',
+          ];
+
     return Column(
       children: [
         for (var i = 0; i < labels.length; i++)
@@ -615,8 +858,8 @@ class _StepChecklist extends StatelessWidget {
                 ? const Icon(Icons.check_circle, color: Colors.green)
                 : active == i && !failed
                 ? const SizedBox(
-                    width: 24,
-                    height: 24,
+                    width: 22,
+                    height: 22,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Icon(
@@ -630,7 +873,7 @@ class _StepChecklist extends StatelessWidget {
             title: Text('${i + 1}. ${labels[i]}'),
             subtitle: i == 0 && gpsDetail != null
                 ? Text(gpsDetail!)
-                : i == 1 && done.contains(1)
+                : (requireQr && i == 1 && done.contains(1))
                 ? const Text('Đã nhận mã; server kiểm tra khi ghi giờ.')
                 : null,
           ),
@@ -646,24 +889,44 @@ class _PunchError extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     color: Theme.of(context).colorScheme.errorContainer,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            message,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onErrorContainer,
-            ),
+          Row(
+            children: [
+              Icon(Icons.error_outline, color: Theme.of(context).colorScheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-          TextButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Thử lại'),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              if (onRetry != null)
+                TextButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Thử lại'),
+                ),
+              if (onAccount != null)
+                TextButton.icon(
+                  onPressed: onAccount,
+                  icon: const Icon(Icons.person),
+                  label: const Text('Mở Tài khoản'),
+                ),
+            ],
           ),
-          if (onAccount != null)
-            TextButton(onPressed: onAccount, child: const Text('Mở Tài khoản')),
         ],
       ),
     ),
@@ -695,7 +958,6 @@ class _ScannerPageState extends State<ScannerPage> with WidgetsBindingObserver {
             throw ArgumentError('Mã QR phải bắt đầu bằng BAOAN:.');
           }
           returned = true;
-          // editForm closes its own dialog before this route is closed.
           manualCode = code;
         },
       );

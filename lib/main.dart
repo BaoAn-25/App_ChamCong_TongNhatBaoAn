@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'domain/app_controller.dart';
+import 'session_storage.dart';
 import 'ui/auth_page.dart';
 import 'ui/home_page.dart';
+import 'ui/biometric_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,11 +18,63 @@ class AttendanceApp extends StatefulWidget {
 }
 
 class _AttendanceAppState extends State<AttendanceApp> {
-  late Future<void> ready;
+  bool _isChecking = true;
+  String? _splashError;
+
   @override
   void initState() {
     super.initState();
-    ready = widget.controller.load();
+    _bootstrap();
+  }
+
+  /// 2, 3 & 8. Khởi động ứng dụng, kiểm tra phiên đăng nhập và sinh trắc học
+  Future<void> _bootstrap() async {
+    setState(() {
+      _isChecking = true;
+      _splashError = null;
+    });
+
+    try {
+      await widget.controller.client.init();
+
+      // 2. Kiểm tra token có tồn tại và còn hạn hay không
+      final isValidSession = await SessionStorage.isSessionValid();
+      if (!isValidSession) {
+        // Hết hạn hoặc không bật ghi nhớ đăng nhập -> xóa token và về màn đăng nhập
+        await SessionStorage.clearSession();
+        await widget.controller.client.clearTokens();
+        if (mounted) setState(() => _isChecking = false);
+        return;
+      }
+
+      // 3. Nếu người dùng đã kích hoạt sinh trắc học trên máy -> bắt buộc quét trước khi vào
+      if (await BiometricLoginHelper.isEnabled) {
+        final authed = await BiometricLoginHelper.authenticate();
+        if (!authed) {
+          // Thất bại hoặc hủy -> cho về màn đăng nhập bằng mật khẩu
+          if (mounted) setState(() => _isChecking = false);
+          return;
+        }
+      }
+
+      // Kiểm tra nhanh với server để đồng bộ dữ liệu người dùng
+      await widget.controller.load();
+
+      if (widget.controller.user == null) {
+        // Token bị server từ chối / hết hạn trên hệ thống
+        await SessionStorage.clearSession();
+        await widget.controller.client.clearTokens();
+      }
+    } catch (e) {
+      // Lỗi mạng hoặc server không phản hồi -> nếu có token và user thì vẫn cho dùng offline
+      if (widget.controller.user == null) {
+        _splashError = 'Không thể xác thực phiên làm việc. Vui lòng kiểm tra kết nối mạng.';
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isChecking = false);
+      }
+    }
   }
 
   @override
@@ -56,7 +110,7 @@ class _AttendanceAppState extends State<AttendanceApp> {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
       ),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF087F8C)),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F7C8A)),
       scaffoldBackgroundColor: const Color(0xFFF3F6FA),
       appBarTheme: const AppBarTheme(
         backgroundColor: Color(0xFFF3F6FA),
@@ -72,7 +126,7 @@ class _AttendanceAppState extends State<AttendanceApp> {
         errorMaxLines: 3,
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFF087F8C), width: 2),
+          borderSide: const BorderSide(color: Color(0xFF0F7C8A), width: 2),
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
@@ -95,45 +149,121 @@ class _AttendanceAppState extends State<AttendanceApp> {
         ),
       ),
     ),
-    home: FutureBuilder<void>(
-      future: ready,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
+    // 8. Màn hình Splash trong lúc kiểm tra phiên, tránh nháy màn đăng nhập
+    home: _isChecking
+        ? const AppSplashScreen()
+        : _splashError != null && widget.controller.user == null
+        ? Scaffold(
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.error_outline, size: 48),
-                    const Text(
-                      'Không đọc được dữ liệu. Dữ liệu hiện có chưa bị xóa.',
+                    const Icon(Icons.wifi_off_rounded, size: 54, color: Color(0xFFDC2626)),
+                    const SizedBox(height: 12),
+                    Text(
+                      _splashError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 14, color: Color(0xFF475569)),
                     ),
-                    Text('${snapshot.error}'),
-                    TextButton(
-                      onPressed: () =>
-                          setState(() => ready = widget.controller.load()),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: _bootstrap,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F7C8A),
+                      ),
                       child: const Text('Thử lại'),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _splashError = null),
+                      child: const Text('Về màn Đăng nhập'),
                     ),
                   ],
                 ),
               ),
             ),
-          );
-        }
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return ListenableBuilder(
-          listenable: widget.controller,
-          builder: (_, _) => widget.controller.user == null
-              ? AuthPage(controller: widget.controller)
-              : HomePage(controller: widget.controller),
-        );
-      },
-    ),
+          )
+        : ListenableBuilder(
+            listenable: widget.controller,
+            builder: (_, _) => widget.controller.user == null
+                ? AuthPage(controller: widget.controller)
+                // 2. Vào thẳng màn chính HomePage, bên trong tự phân nhánh theo role
+                : HomePage(controller: widget.controller),
+          ),
   );
+}
+
+/// 8. Màn hình khởi động (Splash) hiển thị logo và tên ứng dụng
+class AppSplashScreen extends StatelessWidget {
+  const AppSplashScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0F7C8A).withValues(alpha: 0.25),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: Image.asset(
+                  'assets/images/app_logo.png',
+                  width: 76,
+                  height: 76,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: const Color(0xFF0F7C8A),
+                    child: const Icon(
+                      Icons.access_time_filled_rounded,
+                      color: Colors.white,
+                      size: 40,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'CHẤM CÔNG THÔNG MINH',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Đang kiểm tra phiên đăng nhập…',
+              style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+            ),
+            const SizedBox(height: 28),
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Color(0xFF0F7C8A),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

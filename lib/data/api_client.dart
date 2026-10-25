@@ -277,6 +277,21 @@ class ApiClient {
       message = body['error'].toString();
     } else if (body is Map && body['message'] != null) {
       message = body['message'].toString();
+    } else if (body is Map && body['errors'] != null) {
+      final errMap = body['errors'];
+      if (errMap is Map && errMap.isNotEmpty) {
+        final firstKey = errMap.keys.first;
+        final firstVal = errMap[firstKey];
+        if (firstVal is List && firstVal.isNotEmpty) {
+          message = '$firstKey: ${firstVal.first}';
+        } else {
+          message = '$firstKey: $firstVal';
+        }
+      } else {
+        message = errMap.toString();
+      }
+    } else if (body is Map && body['title'] != null) {
+      message = body['title'].toString();
     } else if (res.statusCode == 429) {
       message =
           'Bạn thao tác quá nhanh. Vui lòng chờ khoảng một phút rồi thử lại.';

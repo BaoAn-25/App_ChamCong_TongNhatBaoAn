@@ -430,7 +430,7 @@ public class AttendanceController(AppDb db, QrService qr, FaceAttendancePolicy f
     {
         if (!o.Configured) return "Admin chưa cấu hình văn phòng.";
         if (string.IsNullOrWhiteSpace(r.IdempotencyKey) || r.IdempotencyKey.Length > 100) return "Thiếu mã yêu cầu (idempotencyKey).";
-        if (!qr.IsValid(o.QrSecret, r.Qr, now)) return "QR sai hoặc hết hạn. Quét mã mới từ Admin.";
+        if (!string.IsNullOrEmpty(r.Qr) && !qr.IsValid(o.QrSecret, r.Qr, now)) return "QR sai hoặc hết hạn. Quét mã mới từ Admin.";
         var captured = r.CapturedAt.ToUniversalTime();
         if (r.IsMocked || !double.IsFinite(r.Accuracy) || r.Accuracy < 0 || r.Accuracy > 80 ||
             !double.IsFinite(r.Latitude) || Math.Abs(r.Latitude) > 90 ||

@@ -43,7 +43,7 @@ public record OfficeDto(string Name, double? Latitude, double? Longitude, double
 public record OfficeUpdate(string Name, double Latitude, double Longitude, double Radius);
 public record QrResponse(string Code, DateTime ExpiresAt);
 
-public record PunchRequest(string Qr, double Latitude, double Longitude, double Accuracy,
+public record PunchRequest(string? Qr, double Latitude, double Longitude, double Accuracy,
     DateTime CapturedAt, string IdempotencyKey, bool IsMocked = false, Guid? FaceProof = null,
     Guid? ShiftId = null);
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'core/app_theme.dart';
 import 'domain/app_controller.dart';
 import 'session_storage.dart';
 import 'ui/auth_page.dart';
@@ -81,74 +82,7 @@ class _AttendanceAppState extends State<AttendanceApp> {
   Widget build(BuildContext context) => MaterialApp(
     title: 'Chấm công • Tống Nhật Bảo An',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      visualDensity: VisualDensity.standard,
-      dividerTheme: const DividerThemeData(
-        color: Color(0xFFE2E8F0),
-        thickness: 1,
-      ),
-      navigationBarTheme: const NavigationBarThemeData(
-        backgroundColor: Colors.white,
-        indicatorColor: Color(0xFFD9EFED),
-        height: 76,
-      ),
-      snackBarTheme: const SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
-      ),
-      dialogTheme: DialogThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      ),
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-      ),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F7C8A)),
-      scaffoldBackgroundColor: const Color(0xFFF3F6FA),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFFF3F6FA),
-        centerTitle: false,
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 18,
-        ),
-        errorMaxLines: 3,
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFF0F7C8A), width: 2),
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFDCE4ED)),
-        ),
-      ),
-      cardTheme: CardThemeData(
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        color: Colors.white,
-        margin: const EdgeInsets.only(bottom: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 17),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      ),
-    ),
+    theme: AppTheme.theme,
     // 8. Màn hình Splash trong lúc kiểm tra phiên, tránh nháy màn đăng nhập
     home: _isChecking
         ? const AppSplashScreen()

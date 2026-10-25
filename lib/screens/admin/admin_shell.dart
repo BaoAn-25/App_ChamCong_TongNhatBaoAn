@@ -1,3 +1,4 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import '../../core/app_theme.dart';
 import '../../domain/app_controller.dart';
@@ -150,9 +151,42 @@ class _AdminShellState extends State<AdminShell> {
 
     final pendingCount = _pendingRequestsCount;
 
+    final currentContent = widget.pageBuilder != null
+        ? widget.pageBuilder!(context, _currentPage)
+        : switch (_currentPage) {
+            0 => AdminDashboardScreen(
+                controller: c,
+                onNavigateToStaff: () => setState(() => _currentPage = 1),
+                onNavigateToRequests: () => setState(() => _currentPage = 3),
+              ),
+            1 => AdminManageScreen(
+                controller: c,
+              ),
+            2 => AdminTimesheetScreen(
+                controller: c,
+              ),
+            3 => AdminRequestsScreen(
+                controller: c,
+              ),
+            4 => AdminStatisticsScreen(
+                controller: c,
+              ),
+            5 => AdminAccountScreen(
+                controller: c,
+                onLogout: _handleLogout,
+              ),
+            _ => Center(
+                child: Text(
+                  'Trang: $title',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+          };
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
             // Thanh tiến trình đồng bộ mỏng
@@ -160,10 +194,10 @@ class _AdminShellState extends State<AdminShell> {
               const LinearProgressIndicator(
                 minHeight: 2,
                 backgroundColor: Colors.transparent,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.teal),
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.tealLight),
               ),
 
-            // Header dùng chung chuẩn hoá: không còn thanh "Đã cập nhật lúc..." cồng kềnh
+            // Header gradient chéo navy -> teal, đáy bo 28, 2 vòng tròn trang trí
             AppHeader(
               title: title,
               subtitle: 'Chấm công • Nhóm 09',
@@ -173,62 +207,42 @@ class _AdminShellState extends State<AdminShell> {
               onRefresh: c.isSyncing ? null : c.syncAll,
             ),
 
-            // Nội dung chính bọc trong RefreshIndicator hỗ trợ kéo để tải lại
+            // Nội dung chính đè lên header 24px + Chuyển tab fade-through 250ms
             Expanded(
-              child: RefreshIndicator(
-                onRefresh: () async {
-                  await c.syncAll();
-                },
-                color: AppColors.teal,
-                backgroundColor: AppColors.surface,
-                child: widget.pageBuilder != null
-                    ? widget.pageBuilder!(context, _currentPage)
-                    : switch (_currentPage) {
-                        0 => AdminDashboardScreen(
-                            controller: c,
-                            onNavigateToStaff: () => setState(() => _currentPage = 1),
-                            onNavigateToRequests: () => setState(() => _currentPage = 3),
-                          ),
-                        1 => AdminManageScreen(
-                            controller: c,
-                          ),
-                        2 => AdminTimesheetScreen(
-                            controller: c,
-                          ),
-                        3 => AdminRequestsScreen(
-                            controller: c,
-                          ),
-                        4 => AdminStatisticsScreen(
-                            controller: c,
-                          ),
-                        5 => AdminAccountScreen(
-                            controller: c,
-                            onLogout: _handleLogout,
-                          ),
-                        _ => Center(
-                            child: Text(
-                              'Trang: $title',
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ),
-                      },
+              child: Transform.translate(
+                offset: const Offset(0, -24),
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    await c.syncAll();
+                  },
+                  color: AppColors.teal,
+                  backgroundColor: AppColors.surface,
+                  child: PageTransitionSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    transitionBuilder: (child, primaryAnimation, secondaryAnimation) {
+                      return FadeThroughTransition(
+                        animation: primaryAnimation,
+                        secondaryAnimation: secondaryAnimation,
+                        child: child,
+                      );
+                    },
+                    child: KeyedSubtree(
+                      key: ValueKey<int>(_currentPage),
+                      child: currentContent,
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
         ),
       ),
 
-      // NavigationBar 5 tab cố định
+      // NavigationBar 5 tab cố định cao 68, bóng nhẹ phía trên, chỉ báo viên thuốc teal nhạt
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.navy.withValues(alpha: 0.05),
-              blurRadius: 16,
-              offset: const Offset(0, -2),
-            ),
-          ],
+          boxShadow: AppTheme.navBarShadow,
         ),
         child: NavigationBar(
           selectedIndex: _navBarIndex,
@@ -236,17 +250,17 @@ class _AdminShellState extends State<AdminShell> {
           destinations: [
             const NavigationDestination(
               icon: Icon(Icons.space_dashboard_outlined),
-              selectedIcon: Icon(Icons.space_dashboard, color: AppColors.teal),
+              selectedIcon: Icon(Icons.space_dashboard_rounded, color: AppColors.teal),
               label: 'Tổng quan',
             ),
             const NavigationDestination(
               icon: Icon(Icons.people_alt_outlined),
-              selectedIcon: Icon(Icons.people_alt, color: AppColors.teal),
+              selectedIcon: Icon(Icons.people_alt_rounded, color: AppColors.teal),
               label: 'Nhân sự',
             ),
             const NavigationDestination(
               icon: Icon(Icons.calendar_month_outlined),
-              selectedIcon: Icon(Icons.calendar_month, color: AppColors.teal),
+              selectedIcon: Icon(Icons.calendar_month_rounded, color: AppColors.teal),
               label: 'Bảng công',
             ),
             NavigationDestination(
@@ -261,14 +275,14 @@ class _AdminShellState extends State<AdminShell> {
                   ? Badge(
                       label: Text('$pendingCount'),
                       backgroundColor: AppColors.warning,
-                      child: const Icon(Icons.assignment, color: AppColors.teal),
+                      child: const Icon(Icons.assignment_rounded, color: AppColors.teal),
                     )
-                  : const Icon(Icons.assignment, color: AppColors.teal),
+                  : const Icon(Icons.assignment_rounded, color: AppColors.teal),
               label: 'Đơn từ',
             ),
-            NavigationDestination(
-              icon: const Icon(Icons.grid_view_rounded),
-              selectedIcon: const Icon(Icons.grid_view, color: AppColors.teal),
+            const NavigationDestination(
+              icon: Icon(Icons.grid_view_outlined),
+              selectedIcon: Icon(Icons.grid_view_rounded, color: AppColors.teal),
               label: 'Thêm',
             ),
           ],

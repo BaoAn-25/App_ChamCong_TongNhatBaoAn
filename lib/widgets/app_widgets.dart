@@ -2,7 +2,51 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 
 // ============================================================================
-// 1. APP CARD (Thẻ chuẩn bo góc 20, bóng mờ 6%)
+// 1. BOUNCING WIDGET (Hiệu ứng scale 0.97 khi nhấn)
+// ============================================================================
+class BouncingWidget extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final BorderRadius? borderRadius;
+
+  const BouncingWidget({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.borderRadius,
+  });
+
+  @override
+  State<BouncingWidget> createState() => _BouncingWidgetState();
+}
+
+class _BouncingWidgetState extends State<BouncingWidget> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.onTap == null) {
+      return widget.child;
+    }
+
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedScale(
+        scale: _isPressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeInOut,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 2. APP CARD (Nền trắng, không viền, bo 24, bóng 2 lớp, padding 20, scale 0.97)
 // ============================================================================
 class AppCard extends StatelessWidget {
   final Widget child;
@@ -14,7 +58,7 @@ class AppCard extends StatelessWidget {
   const AppCard({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(AppTheme.space16),
+    this.padding = const EdgeInsets.all(AppTheme.space20),
     this.margin = EdgeInsets.zero,
     this.onTap,
     this.color,
@@ -22,12 +66,11 @@ class AppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget card = Container(
+    Widget cardContent = Container(
       margin: margin,
       decoration: BoxDecoration(
         color: color ?? AppColors.surface,
         borderRadius: AppTheme.radiusCard,
-        border: Border.all(color: AppColors.border, width: 0.8),
         boxShadow: AppTheme.cardShadow,
       ),
       child: ClipRRect(
@@ -40,18 +83,18 @@ class AppCard extends StatelessWidget {
     );
 
     if (onTap != null) {
-      return InkWell(
+      return BouncingWidget(
         onTap: onTap,
         borderRadius: AppTheme.radiusCard,
-        child: card,
+        child: cardContent,
       );
     }
-    return card;
+    return cardContent;
   }
 }
 
 // ============================================================================
-// 2. SECTION HEADER (Tiêu đề 18/600 + Hành động bên phải)
+// 3. SECTION HEADER (Tiêu đề 17/600 + Hành động bên phải)
 // ============================================================================
 class SectionHeader extends StatelessWidget {
   final String title;
@@ -84,13 +127,13 @@ class SectionHeader extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTheme.sectionTitle,
                 ),
                 if (subtitle != null) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     subtitle!,
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: AppTheme.captionSecondary,
                   ),
                 ],
               ],
@@ -119,7 +162,7 @@ class SectionHeader extends StatelessWidget {
 }
 
 // ============================================================================
-// 3. STATUS CHIP (Chip trạng thái bo tròn 999, màu chuẩn)
+// 4. STATUS CHIP (Nền tint 12%, chữ đậm màu trạng thái, chấm tròn 6px, bo 999, cao 24)
 // ============================================================================
 class StatusChip extends StatelessWidget {
   final String status;
@@ -134,16 +177,16 @@ class StatusChip extends StatelessWidget {
     Color textColor;
     Color bgColor;
 
-    if (lower.contains('đúng giờ') || lower.contains('đã duyệt') || lower.contains('hoàn tất')) {
+    if (lower.contains('đúng giờ') || lower.contains('đã duyệt') || lower.contains('hoàn tất') || lower.contains('trong bán kính') || lower.contains('đã bật') || lower.contains('đã đăng ký')) {
       textColor = AppColors.success;
       bgColor = AppColors.successBg;
-    } else if (lower.contains('đi trễ') || lower.contains('chờ duyệt') || lower.contains('chờ')) {
+    } else if (lower.contains('đi trễ') || lower.contains('chờ duyệt') || lower.contains('chờ') || lower.contains('chưa kích hoạt')) {
       textColor = AppColors.warning;
       bgColor = AppColors.warningBg;
     } else if (lower.contains('ra sớm')) {
       textColor = AppColors.orange;
       bgColor = AppColors.orangeBg;
-    } else if (lower.contains('thiếu giờ ra') || lower.contains('từ chối') || lower.contains('hủy')) {
+    } else if (lower.contains('thiếu giờ ra') || lower.contains('từ chối') || lower.contains('hủy') || lower.contains('ngoài bán kính') || lower.contains('thiết bị chưa hỗ trợ')) {
       textColor = AppColors.error;
       bgColor = AppColors.errorBg;
     } else {
@@ -152,14 +195,26 @@ class StatusChip extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: AppTheme.radiusChip,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // Chấm tròn 6px phía trước chữ
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: textColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
           if (icon != null) ...[
             Icon(icon, size: 12, color: textColor),
             const SizedBox(width: 4),
@@ -168,7 +223,7 @@ class StatusChip extends StatelessWidget {
             status,
             style: TextStyle(
               color: textColor,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -179,7 +234,7 @@ class StatusChip extends StatelessWidget {
 }
 
 // ============================================================================
-// 4. STAT CARD (Thẻ thống kê: số lớn, nhãn nhỏ, icon, bấm được)
+// 5. STAT CARD (Icon trong ô bo 12 kích thước 40, tint 12%, số 28/700 đếm lên 600ms, mũi tên khi bấm được)
 // ============================================================================
 class StatCard extends StatelessWidget {
   final String title;
@@ -201,6 +256,11 @@ class StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Trích xuất số từ chuỗi value nếu có để hỗ trợ hiệu ứng đếm lên 600ms
+    final numMatch = RegExp(r'^(\d+(?:\.\d+)?)').firstMatch(value);
+    final targetNum = numMatch != null ? double.tryParse(numMatch.group(1)!) : null;
+    final suffix = numMatch != null ? value.substring(numMatch.end) : '';
+
     return AppCard(
       onTap: onTap,
       padding: const EdgeInsets.all(AppTheme.space16),
@@ -211,41 +271,64 @@ class StatCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
+              // Icon trong ô bo 12 kích thước 40x40, nền tint 10-12%
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: 0.1),
+                  color: iconColor.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(icon, color: iconColor, size: 20),
               ),
+              if (onTap != null)
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 13,
+                  color: AppColors.textSecondary,
+                ),
             ],
           ),
-          const SizedBox(height: AppTheme.space8),
+          const SizedBox(height: AppTheme.space12),
+
+          // Số liệu lớn 28/700 với hiệu ứng đếm lên 600ms
+          targetNum != null
+              ? TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 0, end: targetNum),
+                  duration: const Duration(milliseconds: 600),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, val, child) {
+                    final isInt = targetNum % 1 == 0;
+                    final formatted = isInt ? val.toInt().toString() : val.toStringAsFixed(1);
+                    return Text(
+                      '$formatted$suffix',
+                      style: AppTheme.statNumber,
+                    );
+                  },
+                )
+              : Text(
+                  value,
+                  style: AppTheme.statNumber,
+                ),
+
+          const SizedBox(height: 4),
+
+          // Nhãn 12 màu chữ phụ
           Text(
-            value,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              color: AppColors.navy,
-              letterSpacing: -0.5,
-            ),
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.captionSecondary,
           ),
+
           if (subtitle != null) ...[
             const SizedBox(height: 2),
             Text(
               subtitle!,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: TextStyle(
+                fontSize: 11,
+                color: AppColors.textSecondary.withValues(alpha: 0.8),
+              ),
             ),
           ],
         ],
@@ -255,7 +338,7 @@ class StatCard extends StatelessWidget {
 }
 
 // ============================================================================
-// 5. EMPTY STATE
+// 6. EMPTY STATE (Icon lớn trong vòng tròn tint 72px + tiêu đề + mô tả + nút)
 // ============================================================================
 class EmptyState extends StatelessWidget {
   final String title;
@@ -279,32 +362,32 @@ class EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Vòng tròn tint 72px với opacity 10%
             Container(
-              padding: const EdgeInsets.all(18),
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
-                color: AppColors.input,
+                color: AppColors.teal.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 40, color: AppColors.textSecondary),
+              child: Icon(icon, size: 34, color: AppColors.teal),
             ),
             const SizedBox(height: AppTheme.space16),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: AppTheme.sectionTitle,
             ),
             if (description != null) ...[
-              const SizedBox(height: AppTheme.space8),
+              const SizedBox(height: 6),
               Text(
                 description!,
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
+                style: AppTheme.captionSecondary.copyWith(height: 1.4),
               ),
             ],
             if (action != null) ...[
-              const SizedBox(height: AppTheme.space16),
+              const SizedBox(height: AppTheme.space20),
               action!,
             ],
           ],
@@ -315,7 +398,7 @@ class EmptyState extends StatelessWidget {
 }
 
 // ============================================================================
-// 6. ERROR STATE (Có nút Thử lại)
+// 7. ERROR STATE (Vòng tròn tint 72px màu lỗi + nút Thử lại)
 // ============================================================================
 class ErrorState extends StatelessWidget {
   final String message;
@@ -330,31 +413,34 @@ class ErrorState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppTheme.space24),
+      padding: const EdgeInsets.symmetric(vertical: AppTheme.space32, horizontal: AppTheme.space24),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Vòng tròn tint 72px đỏ
             Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: AppColors.errorBg,
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.error_outline_rounded, size: 36, color: AppColors.error),
+              child: const Icon(Icons.error_outline_rounded, size: 34, color: AppColors.error),
             ),
             const SizedBox(height: AppTheme.space16),
             Text(
+              'Đã xảy ra sự cố',
+              style: AppTheme.sectionTitle.copyWith(color: AppColors.error),
+            ),
+            const SizedBox(height: 6),
+            Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTheme.captionSecondary.copyWith(height: 1.4),
             ),
             if (onRetry != null) ...[
-              const SizedBox(height: AppTheme.space16),
+              const SizedBox(height: AppTheme.space20),
               SecondaryButton(
                 title: 'Thử lại',
                 icon: Icons.refresh_rounded,
@@ -369,7 +455,7 @@ class ErrorState extends StatelessWidget {
 }
 
 // ============================================================================
-// 7. SKELETON LOADER
+// 8. SKELETON LOADER (Shimmer / Pulse chuyển sắc mượt)
 // ============================================================================
 class SkeletonLoader extends StatefulWidget {
   final double width;
@@ -419,7 +505,7 @@ class _SkeletonLoaderState extends State<SkeletonLoader> with SingleTickerProvid
               AppColors.border,
               _anim.value,
             ),
-            borderRadius: widget.borderRadius ?? BorderRadius.circular(8),
+            borderRadius: widget.borderRadius ?? BorderRadius.circular(16),
           ),
         );
       },
@@ -428,7 +514,7 @@ class _SkeletonLoaderState extends State<SkeletonLoader> with SingleTickerProvid
 }
 
 // ============================================================================
-// 8. PRIMARY BUTTON (Gradient Teal, Loading, Scale 0.97 khi nhấn)
+// 9. PRIMARY BUTTON (Gradient Teal, Scale 0.97 khi nhấn, bo 16)
 // ============================================================================
 class PrimaryButton extends StatefulWidget {
   final String title;
@@ -480,7 +566,7 @@ class _PrimaryButtonState extends State<PrimaryButton> {
               ? [
                   BoxShadow(
                     color: AppColors.teal.withValues(alpha: 0.25),
-                    blurRadius: 12,
+                    blurRadius: 14,
                     offset: const Offset(0, 4),
                   ),
                 ]
@@ -531,7 +617,7 @@ class _PrimaryButtonState extends State<PrimaryButton> {
 }
 
 // ============================================================================
-// 9. SECONDARY BUTTON (Nền trắng viền xám nhẹ, bo góc 16)
+// 10. SECONDARY BUTTON (Nền trắng viền xám nhẹ, bo 16, Scale 0.97 khi nhấn)
 // ============================================================================
 class SecondaryButton extends StatelessWidget {
   final String title;
@@ -551,35 +637,38 @@ class SecondaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      height: height,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: AppColors.border, width: 1.2),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          shape: RoundedRectangleBorder(borderRadius: AppTheme.radiusButton),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18, color: AppColors.teal),
-              const SizedBox(width: AppTheme.space8),
-            ],
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
+    return BouncingWidget(
+      onTap: onPressed,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: AppColors.border, width: 1.2),
+            backgroundColor: AppColors.surface,
+            foregroundColor: AppColors.textPrimary,
+            shape: RoundedRectangleBorder(borderRadius: AppTheme.radiusButton),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: AppColors.teal),
+                const SizedBox(width: AppTheme.space8),
+              ],
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -587,7 +676,7 @@ class SecondaryButton extends StatelessWidget {
 }
 
 // ============================================================================
-// 10. APP HEADER (Tiêu đề + Phụ đề + Huy hiệu vai trò + Dòng cập nhật 12px)
+// 11. APP HEADER MỚI (Gradient navy -> teal, đáy bo 28, cao 150, 2 vòng tròn trang trí)
 // ============================================================================
 class AppHeader extends StatelessWidget {
   final String title;
@@ -613,97 +702,201 @@ class AppHeader extends StatelessWidget {
         ? 'Chưa cập nhật'
         : 'Cập nhật ${TimeOfDay.fromDateTime(lastUpdated!).format(context)}';
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(AppTheme.space16, AppTheme.space16, AppTheme.space16, AppTheme.space8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              // Huy hiệu vai trò nhỏ gọn, không phải nút bấm
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.teal.withValues(alpha: 0.1),
-                  borderRadius: AppTheme.radiusChip,
-                  border: Border.all(color: AppColors.teal.withValues(alpha: 0.2), width: 0.8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(roleIcon, size: 14, color: AppColors.teal),
-                    const SizedBox(width: 4),
-                    Text(
-                      roleName,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.teal,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Dòng chữ 12px tinh tế thay cho cả thanh cập nhật to cồng kềnh
-          Row(
-            children: [
-              Container(
-                width: 6,
-                height: 6,
-                decoration: const BoxDecoration(
-                  color: AppColors.success,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                timeStr,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              if (onRefresh != null) ...[
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: onRefresh,
-                  borderRadius: BorderRadius.circular(12),
-                  child: const Padding(
-                    padding: EdgeInsets.all(2),
-                    child: Icon(
-                      Icons.refresh_rounded,
-                      size: 14,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
+    return Container(
+      width: double.infinity,
+      height: 152,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppColors.navy, AppColors.teal],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
       ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+        child: Stack(
+          children: [
+            // Vòng tròn trang trí 1 ở góc phải (opacity 8%)
+            Positioned(
+              right: -30,
+              top: -30,
+              child: Container(
+                width: 160,
+                height: 160,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+            ),
+            // Vòng tròn trang trí 2 ở góc phải (opacity 6%)
+            Positioned(
+              right: 60,
+              top: 30,
+              child: Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.06),
+                ),
+              ),
+            ),
+
+            // Nội dung chính của Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              subtitle,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Huy hiệu vai trò: nền trắng 16% opacity, viền mờ
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: AppTheme.radiusChip,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(roleIcon, size: 13, color: Colors.white),
+                            const SizedBox(width: 5),
+                            Text(
+                              roleName.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Thời gian cập nhật 12px chữ trắng
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF6EE7B7),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        timeStr,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: 0.82),
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      if (onRefresh != null) ...[
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: onRefresh,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Icon(
+                              Icons.refresh_rounded,
+                              size: 14,
+                              color: Colors.white.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 12. ANIMATED LIST ITEM (Fade + trượt lên 12px, trễ 40ms/mục, tối đa 8 mục)
+// ============================================================================
+class AnimatedListItem extends StatelessWidget {
+  final int index;
+  final Widget child;
+
+  const AnimatedListItem({
+    super.key,
+    required this.index,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Giới hạn trễ tối đa 8 mục (8 * 40ms = 320ms)
+    final effectiveIndex = index > 8 ? 8 : index;
+    final delayMs = effectiveIndex * 40;
+
+    return FutureBuilder(
+      future: Future.delayed(Duration(milliseconds: delayMs)),
+      builder: (context, snapshot) {
+        final ready = snapshot.connectionState == ConnectionState.done;
+        return AnimatedOpacity(
+          opacity: ready ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          child: AnimatedSlide(
+            offset: ready ? Offset.zero : const Offset(0, 0.08), // trượt lên ~12px
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            child: child,
+          ),
+        );
+      },
     );
   }
 }

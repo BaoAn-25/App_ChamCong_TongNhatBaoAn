@@ -28,7 +28,7 @@ void main() {
   );
 
   test(
-    'Face login starts an OTP challenge and never saves a session yet',
+    'Face login authenticates directly and saves tokens',
     () async {
       final api = ApiClient(
         httpClient: MockClient((request) async {
@@ -39,17 +39,27 @@ void main() {
           expect(body['image'], 'live-camera-image');
           expect(body.containsKey('password'), isFalse);
           return http.Response(
-            '{"challengeId":"face-login-challenge","email":"staff@gmail.com"}',
+            jsonEncode({
+              'accessToken': 'jwt-access-token',
+              'refreshToken': 'jwt-refresh-token',
+              'user': {
+                'id': 'emp-1',
+                'name': 'Staff Member',
+                'email': 'staff@gmail.com',
+                'username': 'employee',
+                'role': 'employee',
+              },
+            }),
             200,
           );
         }),
       );
-      final started = await AuthService(
+      final user = await AuthService(
         api,
       ).faceLogin(username: ' employee ', image: 'live-camera-image');
-      expect(started.challengeId, 'face-login-challenge');
-      expect(started.email, 'staff@gmail.com');
-      expect(api.hasTokens, isFalse);
+      expect(user.id, 'emp-1');
+      expect(user.email, 'staff@gmail.com');
+      expect(api.hasTokens, isTrue);
     },
   );
 

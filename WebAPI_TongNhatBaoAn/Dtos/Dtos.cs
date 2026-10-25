@@ -5,6 +5,8 @@ namespace WebAPI_TongNhatBaoAn.Dtos;
 public record RegisterRequest(string Name, string Email, string Username, string Password);
 public record VerifyCodeRequest(Guid ChallengeId, string Code);
 public record LoginRequest(string Username, string Password);
+public record ForgotPasswordRequest(string Identifier);
+public record ResetPasswordRequest(Guid ChallengeId, string Code, string NewPassword);
 public record RefreshRequest(string RefreshToken);
 public record ChallengeResponse(Guid ChallengeId, string? DebugCode = null, string? Email = null);
 

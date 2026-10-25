@@ -353,13 +353,14 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
     }
   }
 
-  /// Xóa đơn cá nhân
-  Future<void> _handleDeleteMyRequest(WorkRequest request) async {
+  /// Xóa đơn
+  Future<void> _handleDeleteRequest(WorkRequest request) async {
+    final empName = _getEmployeeName(request.employeeId);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Xác nhận xóa đơn'),
-        content: const Text('Bạn có chắc chắn muốn xóa đơn này?'),
+        content: Text('Bạn có chắc chắn muốn xóa vĩnh viễn đơn "${request.type}" của $empName?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -602,6 +603,19 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
                   ),
                 ),
                 statusChip,
+                const SizedBox(width: 4),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: AppColors.error,
+                  ),
+                  tooltip: 'Xóa đơn',
+                  onPressed: () => _handleDeleteRequest(r),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -703,7 +717,7 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton.icon(
-                      onPressed: () => _handleDeleteMyRequest(r),
+                      onPressed: () => _handleDeleteRequest(r),
                       icon: const Icon(Icons.delete_outline_rounded, size: 16, color: AppColors.error),
                       label: const Text('Xóa đơn', style: TextStyle(color: AppColors.error)),
                     ),

@@ -169,12 +169,77 @@ void main() {
     expect(find.text('Xác minh Email đăng ký'), findsNothing);
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('Forgot password navigates to request form, sends OTP, and resets password', (tester) async {
+    final api = ApiClient();
+    final auth = FakeAuth(api);
+    final ctrl = AppController.withServices(
+      apiClient: api,
+      authService: auth,
+    );
+
+    await tester.pumpWidget(MaterialApp(home: AuthPage(controller: ctrl)));
+    await tester.pumpAndSettle();
+
+    // 1. Nhập username rồi nhấn "Quên mật khẩu?"
+    await tester.enterText(find.byType(TextField).first, 'user@example.com');
+    await tester.tap(find.text('Quên mật khẩu?'));
+    await tester.pumpAndSettle();
+    expect(find.text('Gửi mã OTP xác thực'), findsOneWidget);
+
+    // 2. Bấm "Gửi mã OTP xác thực"
+    await tester.ensureVisible(find.text('Gửi mã OTP xác thực'));
+    await tester.tap(find.text('Gửi mã OTP xác thực'));
+    await tester.pumpAndSettle();
+
+    // 3. Chuyển sang màn hình Đặt lại mật khẩu
+    expect(find.text('Đặt lại mật khẩu'), findsOneWidget);
+    expect(auth.forgotRequests, 1);
+
+    // 4. Nhập mã OTP 6 số và mật khẩu mới
+    await tester.enterText(find.byType(TextField).at(0), '654321');
+    await tester.enterText(find.byType(TextField).at(1), 'newPassword123');
+    await tester.enterText(find.byType(TextField).at(2), 'newPassword123');
+
+    // 5. Nhấn "Xác nhận & Đổi mật khẩu"
+    await tester.ensureVisible(find.text('Xác nhận & Đổi mật khẩu'));
+    await tester.tap(find.text('Xác nhận & Đổi mật khẩu'));
+    await tester.pumpAndSettle();
+
+    expect(auth.resetChallenge, 'forgot-1');
+    expect(auth.resetCode, '654321');
+    expect(auth.resetPass, 'newPassword123');
+    expect(find.text('Đặt lại mật khẩu'), findsNothing);
+  });
 }
 
 class FakeAuth extends AuthService {
   FakeAuth(super.client);
   int registrations = 0;
   String? verifiedChallenge;
+  int forgotRequests = 0;
+  String? resetChallenge;
+  String? resetCode;
+  String? resetPass;
+
+  @override
+  Future<OtpChallengeStart> forgotPassword(String identifier) async =>
+      OtpChallengeStart(
+        challengeId: 'forgot-${++forgotRequests}',
+        email: 'user@example.com',
+      );
+
+  @override
+  Future<void> resetPassword({
+    required String challengeId,
+    required String code,
+    required String newPassword,
+  }) async {
+    resetChallenge = challengeId;
+    resetCode = code;
+    resetPass = newPassword;
+  }
+
   @override
   Future<OtpChallengeStart> register({
     required String name,
@@ -185,6 +250,7 @@ class FakeAuth extends AuthService {
     challengeId: 'challenge-${++registrations}',
     email: email,
   );
+
   @override
   Future<void> verifyEmail({
     required String challengeId,

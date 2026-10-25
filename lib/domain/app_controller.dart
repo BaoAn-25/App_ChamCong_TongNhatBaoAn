@@ -245,11 +245,46 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void stageFaceLogin(String username, OtpChallengeStart started) {
+  Future<void> loginWithFace({
+    required String username,
+    required String image,
+  }) async {
+    demoOtp = null;
+    _user = await auth.faceLogin(username: username, image: image);
+    pendingChallengeId = null;
+    pendingAction = null;
+    pendingUsername = null;
+    pendingEmail = null;
+    await syncAll();
+    notifyListeners();
+  }
+
+  Future<void> requestPasswordReset(String identifier) async {
+    demoOtp = null;
+    final started = await auth.forgotPassword(identifier);
     pendingChallengeId = started.challengeId;
-    pendingAction = 'login';
-    pendingUsername = username;
+    pendingAction = 'reset-password';
+    pendingUsername = identifier;
     pendingEmail = started.email;
+    notifyListeners();
+  }
+
+  Future<void> resetPassword({
+    required String code,
+    required String newPassword,
+  }) async {
+    if (pendingChallengeId == null) {
+      throw StateError('Phiên OTP hết hạn hoặc không hợp lệ.');
+    }
+    await auth.resetPassword(
+      challengeId: pendingChallengeId!,
+      code: code,
+      newPassword: newPassword,
+    );
+    pendingChallengeId = null;
+    pendingAction = null;
+    pendingUsername = null;
+    pendingEmail = null;
     demoOtp = null;
     notifyListeners();
   }

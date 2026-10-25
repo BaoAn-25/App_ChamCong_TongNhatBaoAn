@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -36,6 +37,10 @@ class _PunchPageState extends State<PunchPage> {
   bool _gpsChecking = false;
   bool _gpsValid = false;
   int _faceFailCount = 0;
+
+  // Realtime clock
+  Timer? _clockTimer;
+  DateTime _currentTime = DateTime.now();
 
   AppController get c => widget.controller;
   List<Shift> get shifts {
@@ -87,7 +92,14 @@ class _PunchPageState extends State<PunchPage> {
     selectedShiftId = c.user?.shiftId;
     c.addListener(_changed);
     _loadFace();
-    // 2. Tự động đồng bộ ca mới nhất từ server và chạy GPS
+
+    // Khởi động đồng hồ realtime mỗi giây
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() => _currentTime = DateTime.now());
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         c.syncAll();
@@ -127,6 +139,7 @@ class _PunchPageState extends State<PunchPage> {
 
   @override
   void dispose() {
+    _clockTimer?.cancel();
     c.removeListener(_changed);
     super.dispose();
   }
@@ -150,7 +163,6 @@ class _PunchPageState extends State<PunchPage> {
     }
   }
 
-  // 2 & 7. Tự động kiểm tra GPS khi vào màn hình hoặc bấm nút làm mới nhỏ
   Future<void> _autoCheckGps({bool force = false}) async {
     if (_gpsChecking) return;
     setState(() {
@@ -162,7 +174,7 @@ class _PunchPageState extends State<PunchPage> {
       if (mounted) {
         setState(() {
           _gpsValid = true;
-          done.add(0); // Bước 1: GPS hoàn tất
+          done.add(0);
         });
       }
     } catch (e) {
@@ -182,7 +194,6 @@ class _PunchPageState extends State<PunchPage> {
     }
   }
 
-  // 7. Lấy GPS với thông báo lỗi cụ thể, rõ lý do
   Future<Position> _gps({bool force = false}) async {
     final cached = _freshGps;
     final cachedAt = _freshGpsAt;
@@ -225,7 +236,7 @@ class _PunchPageState extends State<PunchPage> {
     );
     setState(
       () => gpsDetail =
-          'Cách văn phòng ${distance.round()} m • Bán kính cho phép ${office.radius.round()} m • Sai số ±${p.accuracy.round()} m',
+          'Trong phạm vi • cách nơi làm việc ${distance.round()} m',
     );
     if (p.isMocked) {
       throw StateError(
@@ -239,7 +250,7 @@ class _PunchPageState extends State<PunchPage> {
     }
     if (distance > office.radius) {
       throw StateError(
-        'Bạn đang cách văn phòng ${distance.round()} m (cho phép ${office.radius.round()} m). Cần di chuyển vào gần hơn ${(distance - office.radius).ceil()} m.',
+        'Bạn đang cách nơi làm việc ${distance.round()} m (cho phép ${office.radius.round()} m). Cần di chuyển vào gần hơn ${(distance - office.radius).ceil()} m.',
       );
     }
     _freshGps = p;
@@ -263,7 +274,6 @@ class _PunchPageState extends State<PunchPage> {
     });
   }
 
-  // 4 & 6. Flow chấm công mới: Bấm nút -> Quét mặt -> Tự động ghi nhận (tối đa 2 chạm)
   Future<void> _run({bool useBiometricFallback = false}) async {
     if (busy) return;
     setState(() {
@@ -309,7 +319,6 @@ class _PunchPageState extends State<PunchPage> {
         _gpsValid = true;
       });
 
-      // 1. Nếu requireQr = true thì mới yêu cầu quét QR văn phòng
       if (AppConfig.requireQr) {
         setState(() => step = 1);
         var qr = scannedQr;
@@ -327,20 +336,18 @@ class _PunchPageState extends State<PunchPage> {
         setState(() => done.add(1));
       }
 
-      // Bước 2: Xác thực khuôn mặt (Bắt buộc) hoặc vân tay dự phòng
+      // Bước 2: Xác thực khuôn mặt
       final faceStepIndex = AppConfig.requireQr ? 2 : 1;
       setState(() => step = faceStepIndex);
 
       String? proof;
       if (useBiometricFallback) {
-        // 6. Phương án dự phòng: Vân tay điện thoại
         final bioAuthed = await BiometricLoginHelper.authenticate();
         if (!bioAuthed) {
           throw StateError('Xác thực vân tay không thành công hoặc đã bị hủy.');
         }
         proof = 'biometric_fallback';
       } else {
-        // 5. Khuôn mặt là bắt buộc
         final faces = FaceService(c.client);
         final hasFace = await faces.status();
         if (!mounted) return;
@@ -374,14 +381,13 @@ class _PunchPageState extends State<PunchPage> {
         done.add(faceStepIndex);
       });
 
-      // Kiểm tra lại GPS tươi trước khi ghi nhận
       final gpsAge = _freshGpsAt == null
           ? const Duration(days: 1)
           : DateTime.now().difference(_freshGpsAt!);
       p = await _gps(force: gpsAge > const Duration(seconds: 40));
       if (!mounted) return;
 
-      // Bước 3: Tự động gửi và ghi nhận giờ (không bắt bấm thêm nút)
+      // Bước 3: Ghi nhận giờ
       final submitStepIndex = AppConfig.requireQr ? 3 : 2;
       setState(() => step = submitStepIndex);
 
@@ -390,9 +396,9 @@ class _PunchPageState extends State<PunchPage> {
       }
       reconcile = true;
       final office = c.data.office;
-
-      // 2. Nếu requireQr = false thì không đính kèm mã QR
       final String? qrPayload = AppConfig.requireQr ? scannedQr?.trim() : null;
+
+      final punchTime = DateTime.now();
 
       await c.punch(
         qr: qrPayload,
@@ -407,7 +413,7 @@ class _PunchPageState extends State<PunchPage> {
           office.latitude!,
           office.longitude!,
         ),
-        capturedAt: DateTime.now().toUtc(),
+        capturedAt: punchTime.toUtc(),
         mocked: p.isMocked,
       );
       if (!mounted) return;
@@ -417,7 +423,7 @@ class _PunchPageState extends State<PunchPage> {
         );
       }
       reconcile = false;
-      _faceFailCount = 0; // Reset số lần fail
+      _faceFailCount = 0;
       final saved = checkingOut
           ? c.data.attendance.where((a) => a.id == openId).firstOrNull
           : c.openAttendance;
@@ -428,6 +434,16 @@ class _PunchPageState extends State<PunchPage> {
             ? 'Đã gửi chấm công. Vui lòng kiểm tra lịch sử.'
             : '${checkingOut ? 'Chấm công ra' : 'Chấm công vào'} thành công • ${_timing(saved, checkingOut)}';
       });
+
+      // Hiển thị Dialog chấm công thành công chuẩn Mockup 4
+      if (mounted && saved != null) {
+        _showSuccessModal(
+          context: context,
+          attendance: saved,
+          isCheckOut: checkingOut,
+          punchTime: punchTime,
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       if (e is ApiException && e.statusCode >= 400 && e.statusCode < 500) {
@@ -438,10 +454,8 @@ class _PunchPageState extends State<PunchPage> {
         '',
       );
 
-      // 3. Thông báo 'QR sai hoặc hết hạn' chỉ hiển thị khi requireQr = true.
-      // Khi requireQr = false, nếu server vẫn báo lỗi QR thì giải thích rõ nguyên nhân do API backend.
       if (!AppConfig.requireQr && message.toLowerCase().contains('qr')) {
-        message = 'Không thể chấm công: Server API backend vẫn đang bắt buộc kiểm tra mã QR (ValidatePunch). Hãy cập nhật API backend để bỏ qua điều kiện QR.';
+        message = 'Không thể chấm công: Server API backend vẫn đang bắt buộc kiểm tra mã QR. Hãy cấu hình API backend để bỏ qua điều kiện QR.';
       }
 
       setState(() {
@@ -464,7 +478,6 @@ class _PunchPageState extends State<PunchPage> {
     return a.lateMinutes > 0 ? 'Đi trễ ${a.lateMinutes} phút' : 'Đúng giờ';
   }
 
-  // Xử lý khi bấm nút chấm công: nếu chưa đủ điều kiện (GPS, Ca, Khuôn mặt) thì hướng dẫn chi tiết
   void _handlePunchTap({
     required bool canPunch,
     required bool completed,
@@ -475,7 +488,7 @@ class _PunchPageState extends State<PunchPage> {
       return;
     }
     if (shift == null && !inOpenShift) {
-      message(context, 'Vui lòng chạm để chọn một ca làm việc từ danh sách ở trên!');
+      message(context, 'Vui lòng chạm để chọn một ca làm việc từ danh sách!');
       return;
     }
     if (!c.data.office.configured) {
@@ -489,7 +502,7 @@ class _PunchPageState extends State<PunchPage> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Row(
             children: [
-              Icon(Icons.face_retouching_natural, color: Color(0xFF0F7C8A)),
+              Icon(Icons.face_retouching_natural, color: Color(0xFF006766)),
               SizedBox(width: 10),
               Text('Chưa đăng ký khuôn mặt', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
             ],
@@ -499,13 +512,19 @@ class _PunchPageState extends State<PunchPage> {
             style: TextStyle(fontSize: 14, height: 1.4),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Để sau')),
-            FilledButton(
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Để sau'),
+            ),
+            ElevatedButton(
               onPressed: () {
                 Navigator.pop(ctx);
                 _account();
               },
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0F7C8A)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF006766),
+                foregroundColor: Colors.white,
+              ),
               child: const Text('Đăng ký ngay'),
             ),
           ],
@@ -514,84 +533,280 @@ class _PunchPageState extends State<PunchPage> {
       return;
     }
     if (!_gpsValid) {
-      final radius = c.data.office.radius.round();
-      final msg = StringBuffer();
-      if (gpsDetail != null && gpsDetail!.isNotEmpty) {
-        msg.writeln(gpsDetail);
-        msg.writeln();
-      }
-      msg.writeln('Bạn đang đứng cách văn phòng vượt quá bán kính quy định ($radius m).');
-      msg.writeln();
-      msg.writeln('💡 Gợi ý xử lý:');
-      msg.writeln('• Di chuyển vào trong bán kính văn phòng.');
-      msg.writeln('• Hoặc nếu đang test trên máy ảo/điện thoại, hãy đăng nhập Admin vào Quản lý → Cấu hình văn phòng và bấm "Lấy GPS hiện tại" để đặt tọa độ văn phòng tại nơi bạn đang đứng.');
-
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
-            children: [
-              Icon(Icons.location_off_rounded, color: Colors.orange),
-              SizedBox(width: 10),
-              Text('Chưa đạt điều kiện GPS', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-            ],
-          ),
-          content: Text(
-            msg.toString(),
-            style: const TextStyle(fontSize: 13.5, height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Đóng'),
-            ),
-            if (c.isAdmin)
-              OutlinedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  try {
-                    final pos = await acquirePosition();
-                    await c.saveOffice(
-                      Office(
-                        name: c.data.office.name,
-                        latitude: pos.latitude,
-                        longitude: pos.longitude,
-                        radius: c.data.office.radius,
-                        qrSecret: c.data.office.qrSecret,
-                      ),
-                    );
-                    await c.syncAll();
-                    await _autoCheckGps(force: true);
-                    if (mounted) message(context, 'Đã cập nhật vị trí văn phòng tại đây!');
-                  } catch (e) {
-                    if (mounted) message(context, e);
-                  }
-                },
-                icon: const Icon(Icons.pin_drop_rounded, size: 18),
-                label: const Text('Đặt VP tại đây'),
-                style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF0F7C8A)),
-              ),
-            FilledButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await c.syncAll();
-                await _autoCheckGps(force: true);
-              },
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Lấy lại GPS'),
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0F7C8A)),
-            ),
-          ],
-        ),
+      message(
+        context,
+        'Chưa đạt điều kiện vị trí GPS. Hãy kiểm tra bạn đã ở văn phòng và nhấn nút làm mới GPS.',
       );
       return;
     }
+
     _run();
   }
 
   // ============================================================================
-  // GIAO DIỆN CHÍNH MÀN CHẤM CÔNG
+  // DIALOG THÀNH CÔNG THEO MOCKUP 4
+  // ============================================================================
+  void _showSuccessModal({
+    required BuildContext context,
+    required Attendance attendance,
+    required bool isCheckOut,
+    required DateTime punchTime,
+  }) {
+    final isLate = !isCheckOut && attendance.lateMinutes > 0;
+    final isEarly = isCheckOut && attendance.checkOut != null &&
+        attendance.scheduledEnd.difference(attendance.checkOut!).inMinutes > 0;
+    final earlyMins = isCheckOut && attendance.checkOut != null
+        ? attendance.scheduledEnd.difference(attendance.checkOut!).inMinutes
+        : 0;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFCBD5E1),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Icon tick tròn xanh lá lớn
+                Center(
+                  child: Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFF86EFAC), width: 3),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF16A34A).withValues(alpha: 0.2),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: Color(0xFF16A34A),
+                      size: 44,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                Text(
+                  isCheckOut ? 'Chấm công ra thành công' : 'Chấm công vào thành công',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Giờ to đậm
+                Text(
+                  clock(punchTime),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF006766),
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 4),
+
+                Text(
+                  _formatVietnameseDate(punchTime),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Bảng thông tin chi tiết
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Column(
+                    children: [
+                      _buildDetailRow(
+                        label: 'Ca làm việc',
+                        value: attendance.shiftName,
+                      ),
+                      const Divider(height: 16, color: Color(0xFFE2E8F0)),
+                      _buildDetailRow(
+                        label: 'Trạng thái',
+                        customValue: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: (isLate || isEarly)
+                                ? const Color(0xFFFEF3C7)
+                                : const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            isLate
+                                ? 'Đi trễ ${attendance.lateMinutes} phút'
+                                : isEarly
+                                    ? 'Về sớm $earlyMins phút'
+                                    : 'Đúng giờ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: (isLate || isEarly)
+                                  ? const Color(0xFFB45309)
+                                  : const Color(0xFF15803D),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 16, color: Color(0xFFE2E8F0)),
+                      _buildDetailRow(
+                        label: 'Vị trí',
+                        value: 'Trong phạm vi nơi làm việc',
+                      ),
+                      const Divider(height: 16, color: Color(0xFFE2E8F0)),
+                      _buildDetailRow(
+                        label: 'Xác thực',
+                        value: 'Khuôn mặt hợp lệ',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Chú thích ghi chú màu vàng kem
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline_rounded, size: 16, color: Color(0xFFD97706)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          isLate
+                              ? 'Ghi chú: Ca làm việc có 15 phút trừ giờ cho phép. Đi trễ đã được hệ thống ghi nhận.'
+                              : 'Ghi chú: Giờ làm việc đã được hệ thống ghi nhận và đồng bộ trực tiếp lên server.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF92400E),
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // 2 nút hành động
+                Container(
+                  height: 50,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF006766), Color(0xFF004D40)],
+                    ),
+                  ),
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text('Xong', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDetailRow({
+    required String label,
+    String? value,
+    Widget? customValue,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 13, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+        ),
+        if (customValue != null)
+          customValue
+        else
+          Text(
+            value ?? '',
+            style: const TextStyle(fontSize: 13.5, color: Color(0xFF0F172A), fontWeight: FontWeight.w700),
+          ),
+      ],
+    );
+  }
+
+  String _formatVietnameseDate(DateTime date) {
+    const days = [
+      'Thứ Hai',
+      'Thứ Ba',
+      'Thứ Tư',
+      'Thứ Năm',
+      'Thứ Sáu',
+      'Thứ Bảy',
+      'Chủ Nhật',
+    ];
+    final dayName = days[date.weekday - 1];
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year;
+    return '$dayName, $day/$month/$year';
+  }
+
+  String _timeString(DateTime dt) {
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
+  }
+
+  // ============================================================================
+  // GIAO DIỆN CHÍNH (MOCKUP 3)
   // ============================================================================
   @override
   Widget build(BuildContext context) {
@@ -599,16 +814,17 @@ class _PunchPageState extends State<PunchPage> {
     final completed = a?.checkOut != null;
     final inOpenShift = c.openAttendance != null;
 
-    // 4 & 5. Nút chính CHỈ BẬT khi:
-    // - GPS hợp lệ (_gpsValid == true)
-    // - Đã đăng ký khuôn mặt (enrolled == true)
-    // - Ca hợp lệ và chưa hoàn tất
     final canPunch =
         (shift != null || inOpenShift) &&
         c.data.office.configured &&
         !completed &&
         _gpsValid &&
         enrolled == true;
+
+    final userName = c.user?.name ?? 'Nhân viên';
+    final userInitials = userName.isNotEmpty
+        ? userName.trim().split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join('').toUpperCase()
+        : 'NV';
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -617,565 +833,624 @@ class _PunchPageState extends State<PunchPage> {
       },
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.only(bottom: 28),
         children: [
-        _ShiftPicker(
-          shifts: shifts,
-          assignedId: c.user?.shiftId,
-          selectedId: shift?.id,
-          attendance: a,
-          locked: inOpenShift || busy,
-          onSelect: (id) {
-            if (inOpenShift || busy) return;
-            setState(() {
-              selectedShiftId = id;
-              error = null;
-              result = null;
-            });
-          },
-        ),
-        const SizedBox(height: 16),
-
-        // Khối thông tin văn phòng & Trạng thái GPS
-        Container(
-          margin: const EdgeInsets.only(bottom: 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF0B1F3A).withValues(alpha: 0.03),
-                blurRadius: 12,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Header xanh Navy uốn cong chuẩn Mockup 3
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0A2234),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0F7C8A).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(
-                        Icons.business_rounded,
-                        size: 20,
-                        color: Color(0xFF0F7C8A),
+                    const Text(
+                      'Chào buổi sáng',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF94A3B8),
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            c.data.office.name,
-                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Color(0xFF0B1F3A)),
-                          ),
-                          Text(
-                            'Bán kính cho phép: ${c.data.office.radius.round()} m',
-                            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                          ),
-                        ],
+                    const SizedBox(height: 2),
+                    Text(
+                      userName,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Đồng bộ & Lấy lại vị trí GPS',
-                      icon: _gpsChecking
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F7C8A)),
-                            )
-                          : const Icon(Icons.refresh_rounded, size: 22, color: Color(0xFF0F7C8A)),
-                      onPressed: busy || _gpsChecking
-                          ? null
-                          : () async {
-                              await c.syncAll();
-                              await _autoCheckGps(force: true);
-                            },
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                const SizedBox(height: 10),
-                if (!c.data.office.configured)
-                  const Text(
-                    'Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.',
-                    style: TextStyle(color: Colors.red, fontSize: 13),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF006766),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1.5),
                   ),
-
-                // Trạng thái GPS tự động
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _gpsValid ? Icons.check_circle_rounded : Icons.location_on_outlined,
-                      size: 20,
-                      color: _gpsValid ? const Color(0xFF059669) : const Color(0xFFEA580C),
+                  alignment: Alignment.center,
+                  child: Text(
+                    userInitials,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        gpsDetail ??
-                            (_gpsChecking
-                                ? 'Đang tự động đo vị trí GPS…'
-                                : 'Chưa xác định GPS vị trí hiện tại'),
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: _gpsValid ? const Color(0xFF065F46) : const Color(0xFF9A3412),
-                          fontWeight: _gpsValid ? FontWeight.w600 : FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
           ),
-        ),
 
-        const SizedBox(height: 10),
-
-        // 5. Cảnh báo bắt buộc đăng ký khuôn mặt nếu chưa đăng ký
-        if (enrolled == false) ...[
-          Card(
-            color: const Color(0xFFFEF2F2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: const BorderSide(color: Color(0xFFFECACA)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Card Trạng thái ca làm việc + Đồng hồ số realtime to
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF0F172A).withValues(alpha: 0.05),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
                     children: [
-                      Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 22),
-                      SizedBox(width: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatVietnameseDate(_currentTime),
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: completed
+                                  ? const Color(0xFFDCFCE7)
+                                  : inOpenShift
+                                      ? const Color(0xFFE6F3F3)
+                                      : const Color(0xFFF1F5F9),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: completed
+                                    ? const Color(0xFF86EFAC)
+                                    : inOpenShift
+                                        ? const Color(0xFF006766).withValues(alpha: 0.3)
+                                        : const Color(0xFFCBD5E1),
+                              ),
+                            ),
+                            child: Text(
+                              completed
+                                  ? 'Đã hoàn tất ca'
+                                  : inOpenShift
+                                      ? 'Đang trong ca'
+                                      : 'Chưa vào ca',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: completed
+                                    ? const Color(0xFF15803D)
+                                    : inOpenShift
+                                        ? const Color(0xFF006766)
+                                        : const Color(0xFF475569),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Đồng hồ điện tử realtime to rõ ràng
                       Text(
-                        'Bắt buộc đăng ký khuôn mặt',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: Color(0xFF991B1B),
+                        _timeString(_currentTime),
+                        style: const TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2.0,
+                          color: Color(0xFF0A2234),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Thông tin ca làm việc
+                      InkWell(
+                        onTap: (inOpenShift || busy) ? null : () => _showShiftPickerSheet(),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.schedule_rounded, size: 15, color: Color(0xFF006766)),
+                              const SizedBox(width: 6),
+                              Text(
+                                shift != null
+                                    ? '${shift!.name} • ${_formatMinute(shift!.startMinute)} - ${_formatMinute(shift!.endMinute)}'
+                                    : 'Chọn ca làm việc',
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF334155),
+                                ),
+                              ),
+                              if (!inOpenShift && !busy) ...[
+                                const SizedBox(width: 4),
+                                const Icon(Icons.arrow_drop_down_rounded, size: 18, color: Color(0xFF64748B)),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Để tránh chấm công hộ, hệ thống yêu cầu nhân viên phải đăng ký khuôn mặt trước khi điểm danh. Nút chấm công sẽ được mở sau khi bạn hoàn tất đăng ký.',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF7F1D1D), height: 1.3),
+                ),
+                const SizedBox(height: 16),
+
+                // Card Vị trí GPS theo mockup
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
                   ),
-                  const SizedBox(height: 10),
-                  FilledButton.tonal(
-                    onPressed: busy ? null : _account,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFFEE2E2),
-                      foregroundColor: const Color(0xFF991B1B),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: _gpsValid ? const Color(0xFF16A34A) : const Color(0xFFEA580C),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          gpsDetail ??
+                              (_gpsChecking
+                                  ? 'Đang kiểm tra vị trí GPS…'
+                                  : 'Chưa xác định được vị trí GPS'),
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _gpsValid ? const Color(0xFF0F172A) : const Color(0xFF9A3412),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Lấy lại vị trí GPS',
+                        icon: _gpsChecking
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF006766)),
+                              )
+                            : const Icon(Icons.refresh_rounded, size: 20, color: Color(0xFF006766)),
+                        onPressed: (busy || _gpsChecking) ? null : () => _autoCheckGps(force: true),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Nút Quét QR nếu cấu hình yêu cầu
+                if (AppConfig.requireQr) ...[
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : _scanWorkplace,
+                    icon: const Icon(Icons.qr_code_scanner_rounded),
+                    label: Text(
+                      scannedQr == null ? 'Quét QR nơi làm việc' : 'Đã quét QR • Quét lại',
                     ),
-                    child: const Text('Đến màn Đăng ký khuôn mặt ngay'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
+                // Nút tròn chấm công to ở giữa (Circular Punch Button) chuẩn Mockup 3
+                Center(
+                  child: GestureDetector(
+                    onTap: !busy
+                        ? () => _handlePunchTap(
+                              canPunch: canPunch,
+                              completed: completed,
+                              inOpenShift: inOpenShift,
+                            )
+                        : null,
+                    child: Container(
+                      width: 154,
+                      height: 154,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: canPunch
+                              ? (inOpenShift
+                                  ? [const Color(0xFFEA580C), const Color(0xFFC2410C)]
+                                  : [const Color(0xFF006766), const Color(0xFF004D40)])
+                              : [const Color(0xFF64748B), const Color(0xFF475569)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (canPunch
+                                    ? (inOpenShift ? const Color(0xFFEA580C) : const Color(0xFF006766))
+                                    : const Color(0xFF64748B))
+                                .withValues(alpha: 0.35),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (busy)
+                            const SizedBox(
+                              width: 36,
+                              height: 36,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: Colors.white,
+                              ),
+                            )
+                          else ...[
+                            Icon(
+                              inOpenShift
+                                  ? Icons.logout_rounded
+                                  : Icons.face_retouching_natural_rounded,
+                              size: 42,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              completed
+                                  ? 'Hoàn tất'
+                                  : inOpenShift
+                                      ? 'Chấm công ra'
+                                      : 'Chấm công vào',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Nút phụ: Dùng vân tay thay thế khi camera khuôn mặt gặp sự cố
+                if (_faceFailCount >= 1 && (shift != null || inOpenShift) && _gpsValid) ...[
+                  const SizedBox(height: 10),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: busy ? null : () => _run(useBiometricFallback: true),
+                      icon: const Icon(Icons.fingerprint_rounded, size: 20, color: Color(0xFF006766)),
+                      label: const Text(
+                        'Dùng vân tay thiết bị để thay thế',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF006766),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
+                const SizedBox(height: 22),
+
+                // Stepper ngang 3 bước theo mockup
+                _buildHorizontalStepper(),
+                const SizedBox(height: 20),
+
+                // Thông báo lỗi nếu có
+                if (error != null) ...[
+                  _PunchError(
+                    message: error!,
+                    onRetry: busy ? null : () => _run(),
+                    onAccount: enrolled == false && !busy ? _account : null,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Thẻ tóm tắt Lịch sử hôm nay theo mockup
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Hôm nay',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          Text(
+                            '${history.length} lượt',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (history.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            'Chưa có dữ liệu chấm công hôm nay.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                          ),
+                        )
+                      else
+                        for (final item in history) ...[
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF006766).withValues(alpha: 0.1),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.access_time_rounded,
+                                    size: 18,
+                                    color: Color(0xFF006766),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.shiftName,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFF0F172A),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Vào: ${clock(item.checkIn)} • Ra: ${clock(item.checkOut)}',
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: item.lateMinutes > 0
+                                        ? const Color(0xFFFEF3C7)
+                                        : const Color(0xFFDCFCE7),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    item.lateMinutes > 0 ? 'Trễ ${item.lateMinutes}p' : 'Đúng giờ',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: item.lateMinutes > 0
+                                          ? const Color(0xFFB45309)
+                                          : const Color(0xFF15803D),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Stepper ngang 3 bước chuẩn Mockup 3
+  Widget _buildHorizontalStepper() {
+    final steps = [
+      {'label': 'Vị trí', 'index': 0},
+      {'label': 'Khuôn mặt', 'index': AppConfig.requireQr ? 2 : 1},
+      {'label': 'Ghi nhận', 'index': AppConfig.requireQr ? 3 : 2},
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          for (int i = 0; i < steps.length; i++) ...[
+            _buildStepItem(
+              number: i + 1,
+              title: steps[i]['label'] as String,
+              isDone: done.contains(steps[i]['index'] as int),
+              isActive: step == (steps[i]['index'] as int),
+            ),
+            if (i < steps.length - 1)
+              Expanded(
+                child: Container(
+                  height: 1.5,
+                  margin: const EdgeInsets.symmetric(horizontal: 6),
+                  color: done.contains(steps[i]['index'] as int)
+                      ? const Color(0xFF006766)
+                      : const Color(0xFFCBD5E1),
+                ),
               ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepItem({
+    required int number,
+    required String title,
+    required bool isDone,
+    required bool isActive,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isDone
+                ? const Color(0xFF006766)
+                : isActive
+                    ? const Color(0xFFE6F3F3)
+                    : const Color(0xFFF1F5F9),
+            border: Border.all(
+              color: isDone
+                  ? const Color(0xFF006766)
+                  : isActive
+                      ? const Color(0xFF006766)
+                      : const Color(0xFFCBD5E1),
+              width: 1.5,
             ),
           ),
-          const SizedBox(height: 10),
-        ],
-
-        // 1. Chỉ hiển thị nút Quét QR khi cờ requireQr = true
-        if (AppConfig.requireQr) ...[
-          OutlinedButton.icon(
-            onPressed: busy ? null : _scanWorkplace,
-            icon: const Icon(Icons.qr_code_scanner),
-            label: Text(
-              scannedQr == null
-                  ? 'Quét QR nơi làm việc'
-                  : 'Đã quét QR • Quét lại',
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
-
-        // 4. Nút chính "Chấm công vào / ra"
-        _PunchButton(
-          busy: busy,
-          canPunch: canPunch,
-          label: completed
-              ? 'Đã hoàn tất ca này'
-              : inOpenShift
-              ? 'Chấm công ra'
-              : 'Chấm công vào ca đã chọn',
-          onPressed: !busy
-              ? () => _handlePunchTap(
-                    canPunch: canPunch,
-                    completed: completed,
-                    inOpenShift: inOpenShift,
-                  )
-              : null,
+          alignment: Alignment.center,
+          child: isDone
+              ? const Icon(Icons.check, size: 14, color: Colors.white)
+              : Text(
+                  '$number',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: isActive ? const Color(0xFF006766) : const Color(0xFF64748B),
+                  ),
+                ),
         ),
-
-        // 6. Nút phụ: Dùng vân tay thay thế (khi camera lỗi hoặc thất bại xác thực)
-        if (_faceFailCount >= 1 && (shift != null || inOpenShift) && _gpsValid) ...[
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: busy ? null : () => _run(useBiometricFallback: true),
-            icon: const Icon(Icons.fingerprint_rounded, size: 20),
-            label: const Text('Dùng vân tay thay thế (dự phòng)'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              foregroundColor: const Color(0xFF0F7C8A),
-              side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.2),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: isDone || isActive ? FontWeight.w700 : FontWeight.w500,
+            color: isDone || isActive ? const Color(0xFF0F172A) : const Color(0xFF64748B),
           ),
-        ],
-
-        const SizedBox(height: 16),
-
-        // 3. Danh sách các bước: 3 bước khi requireQr = false
-        _StepChecklist(
-          active: step,
-          done: done,
-          failed: error != null,
-          gpsDetail: gpsDetail,
-          requireQr: AppConfig.requireQr,
         ),
+      ],
+    );
+  }
 
-        // Thông báo lỗi chi tiết
-        if (error != null)
-          _PunchError(
-            message: error!,
-            onRetry: busy ? null : () => _run(),
-            onAccount: enrolled == false && !busy ? _account : null,
-          ),
-
-        if (result != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              result!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-
-        const SizedBox(height: 20),
-        Section(
-          title: 'Lịch sử chấm công hôm nay',
-          subtitle: 'Giờ đã được ghi nhận trên hệ thống',
+  void _showShiftPickerSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (history.isEmpty)
-                const Text('Chưa có lượt chấm công hôm nay.'),
-              for (final item in history)
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Chọn ca làm việc',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              for (final s in shifts) ...[
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text(item.shiftName),
-                  subtitle: Text(
-                    'Vào: ${clock(item.checkIn)} • Ra: ${clock(item.checkOut)}\n'
-                    '${item.checkOut == null ? 'Đang trong ca' : 'Đã hoàn tất'} • ${_timing(item, false)}'
-                    '${item.checkOut != null ? ' • ${_timing(item, true)}' : ''}',
-                  ),
-                  isThreeLine: true,
+                  leading: const Icon(Icons.access_time_rounded, color: Color(0xFF006766)),
+                  title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('${_formatMinute(s.startMinute)} - ${_formatMinute(s.endMinute)}'),
+                  trailing: s.id == (shift?.id)
+                      ? const Icon(Icons.check_circle, color: Color(0xFF006766))
+                      : null,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    setState(() => selectedShiftId = s.id);
+                  },
                 ),
+              ],
             ],
           ),
         ),
-      ],
-    ),
-  );
+      ),
+    );
   }
-}
 
-class _ShiftPicker extends StatelessWidget {
-  final List<Shift> shifts;
-  final String? assignedId;
-  final String? selectedId;
-  final Attendance? attendance;
-  final bool locked;
-  final ValueChanged<String> onSelect;
-  const _ShiftPicker({
-    required this.shifts,
-    required this.assignedId,
-    required this.selectedId,
-    required this.attendance,
-    required this.locked,
-    required this.onSelect,
-  });
-  String _time(int minute) =>
+  String _formatMinute(int minute) =>
       '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}';
-  @override
-  Widget build(BuildContext context) => Section(
-    icon: Icons.schedule_rounded,
-    iconColor: const Color(0xFF0F7C8A),
-    title: 'Chọn ca làm việc',
-    subtitle: attendance == null
-        ? (AppConfig.requireQr
-            ? 'Bấm vào ca để chọn, rồi quét QR nơi làm việc'
-            : 'Chọn ca làm việc, GPS tự nhận diện vị trí')
-        : attendance!.checkOut == null
-        ? 'Đang trong ca • bấm nút để chấm công ra'
-        : 'Ca này đã hoàn tất',
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (shifts.isEmpty)
-          const EmptyState('Chưa có ca làm nào trên hệ thống.')
-        else
-          for (final item in shifts) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Material(
-                color: item.id == selectedId
-                    ? const Color(0xFFF0FDFA)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                child: InkWell(
-                  onTap: locked ? null : () => onSelect(item.id),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: item.id == selectedId
-                            ? const Color(0xFF0F7C8A)
-                            : const Color(0xFFE2E8F0),
-                        width: item.id == selectedId ? 1.5 : 1,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: item.id == selectedId
-                                ? const Color(0xFF0F7C8A).withValues(alpha: 0.12)
-                                : const Color(0xFFF1F5F9),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.access_time_rounded,
-                            size: 18,
-                            color: item.id == selectedId
-                                ? const Color(0xFF0F7C8A)
-                                : const Color(0xFF64748B),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Text(
-                                    item.name,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14.5,
-                                      color: item.id == selectedId
-                                          ? const Color(0xFF0F7C8A)
-                                          : const Color(0xFF0B1F3A),
-                                    ),
-                                  ),
-                                  if (item.id == assignedId) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFEFF6FF),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: const Color(0xFFBFDBFE)),
-                                      ),
-                                      child: const Text(
-                                        'Ca được phân',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          color: Color(0xFF1D4ED8),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                '${_time(item.startMinute)} – ${_time(item.endMinute)} • Cho phép trễ ${item.grace}p',
-                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(
-                          item.id == selectedId
-                              ? Icons.check_circle_rounded
-                              : Icons.radio_button_unchecked_rounded,
-                          color: item.id == selectedId
-                              ? const Color(0xFF0F7C8A)
-                              : const Color(0xFFCBD5E1),
-                          size: 22,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        if (attendance != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              'Giờ vào thực tế: ${clock(attendance!.checkIn)}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0F7C8A)),
-            ),
-          ),
-      ],
-    ),
-  );
-}
-
-class _PunchButton extends StatelessWidget {
-  final bool busy;
-  final bool canPunch;
-  final String label;
-  final VoidCallback? onPressed;
-  const _PunchButton({
-    required this.busy,
-    required this.canPunch,
-    required this.label,
-    this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isOut = label.contains('ra');
-    final isDisabled = onPressed == null;
-
-    final Color bgColor = canPunch
-        ? (isOut ? const Color(0xFFEA580C) : const Color(0xFF0F7C8A))
-        : const Color(0xFF94A3B8); // Màu khi chưa đủ điều kiện vẫn nổi bật rõ ràng, bấm vào hướng dẫn
-
-    return Container(
-      width: double.infinity,
-      height: 56,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: isDisabled
-            ? null
-            : [
-                BoxShadow(
-                  color: bgColor.withValues(alpha: 0.25),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-      ),
-      child: FilledButton.icon(
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: bgColor,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: const Color(0xFFE2E8F0),
-          disabledForegroundColor: const Color(0xFF94A3B8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        ),
-        icon: busy
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
-            : Icon(
-                isOut ? Icons.logout_rounded : Icons.face_retouching_natural_rounded,
-                size: 22,
-              ),
-        label: Text(
-          busy ? 'Đang xác thực & gửi giờ…' : label,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-}
-
-// 3. Danh sách bước linh hoạt: 3 bước khi requireQr = false, 4 bước khi requireQr = true
-class _StepChecklist extends StatelessWidget {
-  final int active;
-  final Set<int> done;
-  final bool failed;
-  final bool requireQr;
-  final String? gpsDetail;
-  const _StepChecklist({
-    required this.active,
-    required this.done,
-    required this.failed,
-    required this.requireQr,
-    this.gpsDetail,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final labels = requireQr
-        ? [
-            'Kiểm tra vị trí GPS',
-            'Quét QR văn phòng',
-            'Xác thực khuôn mặt',
-            'Gửi và ghi nhận giờ',
-          ]
-        : [
-            'Kiểm tra vị trí GPS',
-            'Xác thực khuôn mặt',
-            'Gửi và ghi nhận giờ',
-          ];
-
-    return Column(
-      children: [
-        for (var i = 0; i < labels.length; i++)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: done.contains(i)
-                ? const Icon(Icons.check_circle, color: Colors.green)
-                : active == i && !failed
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    active == i && failed
-                        ? Icons.error_outline
-                        : Icons.radio_button_unchecked,
-                    color: active == i && failed
-                        ? Theme.of(context).colorScheme.error
-                        : null,
-                  ),
-            title: Text('${i + 1}. ${labels[i]}'),
-            subtitle: i == 0 && gpsDetail != null
-                ? Text(gpsDetail!)
-                : (requireQr && i == 1 && done.contains(1))
-                ? const Text('Đã nhận mã; server kiểm tra khi ghi giờ.')
-                : null,
-          ),
-      ],
-    );
-  }
 }
 
 class _PunchError extends StatelessWidget {

@@ -62,7 +62,7 @@ class AuthService {
     return OtpChallengeStart.fromJson(res);
   }
 
-  Future<OtpChallengeStart> faceLogin({
+  Future<Employee> faceLogin({
     required String username,
     required String image,
   }) async {
@@ -71,7 +71,36 @@ class AuthService {
       auth: false,
       body: {'username': username.trim(), 'image': image},
     );
+    await client.setTokens(
+      access: res['accessToken'],
+      refresh: res['refreshToken'],
+    );
+    return Employee.fromJson(res['user']);
+  }
+
+  Future<OtpChallengeStart> forgotPassword(String identifier) async {
+    final res = await client.post(
+      '/api/auth/forgot-password',
+      auth: false,
+      body: {'identifier': identifier.trim()},
+    );
     return OtpChallengeStart.fromJson(res);
+  }
+
+  Future<void> resetPassword({
+    required String challengeId,
+    required String code,
+    required String newPassword,
+  }) async {
+    await client.post(
+      '/api/auth/reset-password',
+      auth: false,
+      body: {
+        'challengeId': challengeId,
+        'code': code.trim(),
+        'newPassword': newPassword,
+      },
+    );
   }
 
   Future<Employee> verifyOtp({

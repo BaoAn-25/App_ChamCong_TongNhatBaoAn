@@ -10,9 +10,9 @@ namespace WebAPI_TongNhatBaoAn.Controllers;
 
 public record FaceLoginRequest(string Username, string Image);
 
-/// Face replaces the password step only; OTP is still required before tokens.
+/// Face login verifies identity and issues tokens directly.
 [ApiController, Route("api/auth"), AllowAnonymous, EnableRateLimiting("auth")]
-public class FaceLoginController(AppDb db, FaceMatcher matcher, FaceTemplateCipher cipher, OtpService otp) : ApiBase
+public class FaceLoginController(AppDb db, FaceMatcher matcher, FaceTemplateCipher cipher, TokenService tokens) : ApiBase
 {
     [HttpPost("face-login"), RequestSizeLimit(4_500_000)]
     public async Task<IActionResult> Login(FaceLoginRequest request)
@@ -39,16 +39,10 @@ public class FaceLoginController(AppDb db, FaceMatcher matcher, FaceTemplateCiph
             return Fail(denied, 401);
         if (!await db.FaceProfiles.AnyAsync(p => p.EmployeeId == employee.Id && p.AllowLogin && p.UpdatedAt == profile.UpdatedAt))
             return Fail(denied, 401);
-        var (challenge, code) = otp.Create(employee.Id, "login");
+
+        var (access, expires) = tokens.CreateAccess(employee);
+        var refresh = tokens.CreateRefresh(employee);
         await db.SaveChangesAsync();
-        try { await otp.SendAsync(employee.Email, "Mã OTP đăng nhập sau xác thực khuôn mặt", code); }
-        catch (OtpDeliveryException)
-        {
-            challenge.Consumed = true;
-            await db.SaveChangesAsync();
-            return Fail(OtpDeliveryException.PublicMessage, 503);
-        }
-        // No accessToken/refreshToken until POST /api/auth/verify-otp succeeds.
-        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null, employee.Email));
+        return Ok(new TokenResponse(access, expires, refresh, EmployeeDto.From(employee)));
     }
 }

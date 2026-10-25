@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -19,7 +19,7 @@ public abstract class ApiBase : ControllerBase
 [ApiController, Route("api/auth"), EnableRateLimiting("auth")]
 public class AuthController(AppDb db, TokenService tokens, OtpService otp) : ApiBase
 {
-    private const string Verify = "verify-email", Login = "login";
+    private const string Verify = "verify-email", Login = "login", ResetPasswordPurpose = "reset-password";
     private static readonly string DummyHash = BCrypt.Net.BCrypt.HashPassword("dummy-password");
 
     [HttpPost("register")]
@@ -94,6 +94,45 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         if (emp == null) return Fail(error!, 401);
         if (!emp.Active || !emp.EmailVerified) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
         return Ok(await IssueAsync(emp));
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest r)
+    {
+        var id = (r.Identifier ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(id)) return Fail("Vui lòng nhập tên đăng nhập hoặc email.");
+        var emp = await db.Employees.FirstOrDefaultAsync(e => e.Username == id || e.Email == id);
+        if (emp == null || !emp.Active)
+            return Fail("Không tìm thấy tài khoản hợp lệ với thông tin đã cung cấp.", 404);
+
+        var (challenge, code) = otp.Create(emp.Id, ResetPasswordPurpose);
+        await db.SaveChangesAsync();
+        try { await otp.SendAsync(emp.Email, "Mã OTP đặt lại mật khẩu", code); }
+        catch (OtpDeliveryException)
+        {
+            challenge.Consumed = true;
+            await db.SaveChangesAsync();
+            return Fail(OtpDeliveryException.PublicMessage, 503);
+        }
+        return Ok(new ChallengeResponse(challenge.Id, otp.DebugReturn ? code : null, emp.Email));
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest r)
+    {
+        if (string.IsNullOrWhiteSpace(r.NewPassword) || r.NewPassword.Length < 8)
+            return Fail("Mật khẩu mới phải có ít nhất 8 ký tự.");
+
+        var (emp, error) = await otp.VerifyAsync(r.ChallengeId, r.Code, ResetPasswordPurpose);
+        if (emp == null) return Fail(error!, 400);
+        if (!emp.Active) return Fail("Tài khoản đã bị khóa hoặc vô hiệu hóa.", 403);
+
+        emp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.NewPassword);
+        var oldTokens = await db.RefreshTokens.Where(t => t.EmployeeId == emp.Id && !t.Revoked).ToListAsync();
+        foreach (var t in oldTokens) t.Revoked = true;
+
+        await db.SaveChangesAsync();
+        return Ok(new { success = true, message = "Đặt lại mật khẩu thành công. Vui lòng đăng nhập với mật khẩu mới." });
     }
 
     [HttpPost("refresh")]
@@ -391,7 +430,7 @@ public class OfficeController(AppDb db, QrService qr) : ApiBase
     {
         if (string.IsNullOrWhiteSpace(r.Name) || !double.IsFinite(r.Latitude) || !double.IsFinite(r.Longitude) ||
             Math.Abs(r.Latitude) > 90 || Math.Abs(r.Longitude) > 180 || !double.IsFinite(r.Radius) ||
-            r.Radius is < 20 or > 5000)
+            r.Radius is < 20 or > 50000000)
             return Fail("Nhập tọa độ hợp lệ và bán kính 20–5000 mét.");
         var o = await GetOfficeAsync();
         o.Name = r.Name.Trim(); o.Latitude = r.Latitude; o.Longitude = r.Longitude; o.Radius = r.Radius;

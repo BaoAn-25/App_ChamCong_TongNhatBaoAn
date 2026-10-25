@@ -37,6 +37,7 @@ class _HomePageState extends State<HomePage> {
   String? _avatarBase64;
   DateTimeRange? historyRange;
   bool _staffExpanded = false;
+  DateTime _selectedTimesheetMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
 
   @override
   void initState() {
@@ -430,24 +431,35 @@ class _HomePageState extends State<HomePage> {
         .where((r) => r.status == 'pending' && (c.isStaff || r.employeeId == c.user?.id))
         .length;
 
-    final labels = [
-      'Tổng quan',
-      c.isStaff ? 'Nhân sự' : 'Chấm công',
-      'Bảng công',
-      'Thống kê',
-      'Đơn từ',
-      'Tài khoản',
-    ];
+    final isEmployee = !c.isStaff;
+
+    final labels = isEmployee
+        ? ['Chấm công', 'Bảng công', 'Đơn từ', 'Tài khoản']
+        : [
+            'Tổng quan',
+            'Nhân sự',
+            'Bảng công',
+            'Thống kê',
+            'Đơn từ',
+            'Tài khoản',
+          ];
 
     final wide = MediaQuery.sizeOf(context).width >= 900;
-    final content = switch (page) {
-      0 => dashboard(),
-      1 => c.isStaff ? management() : PunchPage(controller: c),
-      2 => history(),
-      3 => StatsPage(controller: c),
-      4 => requests(),
-      _ => profile(),
-    };
+    final content = isEmployee
+        ? switch (page) {
+            0 => PunchPage(controller: c),
+            1 => _buildEmployeeTimesheetView(),
+            2 => requests(),
+            _ => profile(),
+          }
+        : switch (page) {
+            0 => dashboard(),
+            1 => management(),
+            2 => history(),
+            3 => StatsPage(controller: c),
+            4 => requests(),
+            _ => profile(),
+          };
 
     final currentTitle = labels[page < labels.length ? page : 0];
 
@@ -583,59 +595,94 @@ class _HomePageState extends State<HomePage> {
               children: [
                 if (wide)
                   NavigationRail(
-                    selectedIndex: switch (page) {
-                      0 => 0,
-                      1 => 1,
-                      2 => 2,
-                      4 => 3,
-                      _ => 4,
-                    },
+                    selectedIndex: isEmployee
+                        ? page.clamp(0, 3)
+                        : switch (page) {
+                            0 => 0,
+                            1 => 1,
+                            2 => 2,
+                            4 => 3,
+                            _ => 4,
+                          },
                     labelType: NavigationRailLabelType.all,
                     onDestinationSelected: (v) => setState(() {
                       search = '';
-                      page = switch (v) {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        _ => 5,
-                      };
+                      page = isEmployee
+                          ? v.clamp(0, 3)
+                          : switch (v) {
+                              0 => 0,
+                              1 => 1,
+                              2 => 2,
+                              3 => 4,
+                              _ => 5,
+                            };
                     }),
-                    destinations: [
-                      const NavigationRailDestination(
-                        icon: Icon(Icons.space_dashboard_outlined),
-                        selectedIcon: Icon(Icons.space_dashboard_rounded),
-                        label: Text('Tổng quan'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
-                        selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
-                        label: Text(c.isStaff ? 'Nhân sự' : 'Chấm công'),
-                      ),
-                      const NavigationRailDestination(
-                        icon: Icon(Icons.calendar_month_outlined),
-                        selectedIcon: Icon(Icons.calendar_month_rounded),
-                        label: Text('Bảng công'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Badge(
-                          isLabelVisible: pendingCount > 0,
-                          label: Text('$pendingCount'),
-                          child: const Icon(Icons.assignment_outlined),
-                        ),
-                        selectedIcon: Badge(
-                          isLabelVisible: pendingCount > 0,
-                          label: Text('$pendingCount'),
-                          child: const Icon(Icons.assignment_turned_in_rounded),
-                        ),
-                        label: const Text('Đơn từ'),
-                      ),
-                      const NavigationRailDestination(
-                        icon: Icon(Icons.person_outline_rounded),
-                        selectedIcon: Icon(Icons.person_rounded),
-                        label: Text('Tài khoản'),
-                      ),
-                    ],
+                    destinations: isEmployee
+                        ? [
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.timer_outlined),
+                              selectedIcon: Icon(Icons.timer_rounded),
+                              label: Text('Chấm công'),
+                            ),
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.calendar_month_outlined),
+                              selectedIcon: Icon(Icons.calendar_month_rounded),
+                              label: Text('Bảng công'),
+                            ),
+                            NavigationRailDestination(
+                              icon: Badge(
+                                isLabelVisible: pendingCount > 0,
+                                label: Text('$pendingCount'),
+                                child: const Icon(Icons.assignment_outlined),
+                              ),
+                              selectedIcon: Badge(
+                                isLabelVisible: pendingCount > 0,
+                                label: Text('$pendingCount'),
+                                child: const Icon(Icons.assignment_turned_in_rounded),
+                              ),
+                              label: const Text('Đơn từ'),
+                            ),
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.person_outline_rounded),
+                              selectedIcon: Icon(Icons.person_rounded),
+                              label: Text('Tài khoản'),
+                            ),
+                          ]
+                        : [
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.space_dashboard_outlined),
+                              selectedIcon: Icon(Icons.space_dashboard_rounded),
+                              label: Text('Tổng quan'),
+                            ),
+                            NavigationRailDestination(
+                              icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
+                              selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
+                              label: Text(c.isStaff ? 'Nhân sự' : 'Chấm công'),
+                            ),
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.calendar_month_outlined),
+                              selectedIcon: Icon(Icons.calendar_month_rounded),
+                              label: Text('Bảng công'),
+                            ),
+                            NavigationRailDestination(
+                              icon: Badge(
+                                isLabelVisible: pendingCount > 0,
+                                label: Text('$pendingCount'),
+                                child: const Icon(Icons.assignment_outlined),
+                              ),
+                              selectedIcon: Badge(
+                                isLabelVisible: pendingCount > 0,
+                                label: Text('$pendingCount'),
+                                child: const Icon(Icons.assignment_turned_in_rounded),
+                              ),
+                              label: const Text('Đơn từ'),
+                            ),
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.person_outline_rounded),
+                              selectedIcon: Icon(Icons.person_rounded),
+                              label: Text('Tài khoản'),
+                            ),
+                          ],
                   ),
                 Expanded(
                   child: Center(
@@ -652,67 +699,107 @@ class _HomePageState extends State<HomePage> {
       ),
       bottomNavigationBar: wide
           ? null
-          : NavigationBar(
-              selectedIndex: switch (page) {
-                0 => 0,
-                1 => 1,
-                2 => 2,
-                4 => 3,
-                5 => 4, // Khi đang ở trang Tài khoản
-                _ => 0,
-              },
-              onDestinationSelected: (v) {
-                if (v == 4) {
-                  _showUtilitiesSheet();
-                  return;
-                }
-                setState(() {
-                  search = '';
-                  page = switch (v) {
+          : isEmployee
+              ? NavigationBar(
+                  selectedIndex: page.clamp(0, 3),
+                  onDestinationSelected: (v) {
+                    setState(() {
+                      search = '';
+                      page = v.clamp(0, 3);
+                    });
+                  },
+                  destinations: [
+                    const NavigationDestination(
+                      icon: Icon(Icons.timer_outlined),
+                      selectedIcon: Icon(Icons.timer_rounded),
+                      label: 'Chấm công',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.calendar_month_outlined),
+                      selectedIcon: Icon(Icons.calendar_month_rounded),
+                      label: 'Bảng công',
+                    ),
+                    NavigationDestination(
+                      icon: Badge(
+                        isLabelVisible: pendingCount > 0,
+                        label: Text('$pendingCount'),
+                        child: const Icon(Icons.assignment_outlined),
+                      ),
+                      selectedIcon: Badge(
+                        isLabelVisible: pendingCount > 0,
+                        label: Text('$pendingCount'),
+                        child: const Icon(Icons.assignment_turned_in_rounded),
+                      ),
+                      label: 'Đơn từ',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.person_outline_rounded),
+                      selectedIcon: Icon(Icons.person_rounded),
+                      label: 'Tài khoản',
+                    ),
+                  ],
+                )
+              : NavigationBar(
+                  selectedIndex: switch (page) {
                     0 => 0,
                     1 => 1,
                     2 => 2,
-                    3 => 4,
+                    4 => 3,
+                    5 => 4, // Khi đang ở trang Tài khoản
                     _ => 0,
-                  };
-                });
-              },
-              destinations: [
-                const NavigationDestination(
-                  icon: Icon(Icons.space_dashboard_outlined),
-                  selectedIcon: Icon(Icons.space_dashboard_rounded),
-                  label: 'Tổng quan',
+                  },
+                  onDestinationSelected: (v) {
+                    if (v == 4) {
+                      _showUtilitiesSheet();
+                      return;
+                    }
+                    setState(() {
+                      search = '';
+                      page = switch (v) {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        _ => 0,
+                      };
+                    });
+                  },
+                  destinations: [
+                    const NavigationDestination(
+                      icon: Icon(Icons.space_dashboard_outlined),
+                      selectedIcon: Icon(Icons.space_dashboard_rounded),
+                      label: 'Tổng quan',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
+                      selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
+                      label: c.isStaff ? 'Nhân sự' : 'Chấm công',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.calendar_month_outlined),
+                      selectedIcon: Icon(Icons.calendar_month_rounded),
+                      label: 'Bảng công',
+                    ),
+                    NavigationDestination(
+                      icon: Badge(
+                        isLabelVisible: pendingCount > 0,
+                        label: Text('$pendingCount'),
+                        child: const Icon(Icons.assignment_outlined),
+                      ),
+                      selectedIcon: Badge(
+                        isLabelVisible: pendingCount > 0,
+                        label: Text('$pendingCount'),
+                        child: const Icon(Icons.assignment_turned_in_rounded),
+                      ),
+                      label: 'Đơn từ',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.widgets_outlined),
+                      selectedIcon: Icon(Icons.widgets_rounded),
+                      label: 'Tiện ích',
+                    ),
+                  ],
                 ),
-                NavigationDestination(
-                  icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
-                  selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
-                  label: c.isStaff ? 'Nhân sự' : 'Chấm công',
-                ),
-                const NavigationDestination(
-                  icon: Icon(Icons.calendar_month_outlined),
-                  selectedIcon: Icon(Icons.calendar_month_rounded),
-                  label: 'Bảng công',
-                ),
-                NavigationDestination(
-                  icon: Badge(
-                    isLabelVisible: pendingCount > 0,
-                    label: Text('$pendingCount'),
-                    child: const Icon(Icons.assignment_outlined),
-                  ),
-                  selectedIcon: Badge(
-                    isLabelVisible: pendingCount > 0,
-                    label: Text('$pendingCount'),
-                    child: const Icon(Icons.assignment_turned_in_rounded),
-                  ),
-                  label: 'Đơn từ',
-                ),
-                const NavigationDestination(
-                  icon: Icon(Icons.widgets_outlined),
-                  selectedIcon: Icon(Icons.widgets_rounded),
-                  label: 'Tiện ích',
-                ),
-              ],
-            ),
     );
   }
 
@@ -3481,51 +3568,271 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> editOffice([Position? position]) async {
-    final office = c.data.office;
-    final name = office.name == 'Van phong chinh'
-        ? 'Văn phòng chính'
-        : office.name;
-    await editForm(
-      context,
-      title: 'Cấu hình văn phòng chấm công',
-      fields: {
-        'Tên văn phòng': name,
-        'Vĩ độ': (position?.latitude ?? office.latitude)?.toString() ?? '',
-        'Kinh độ': (position?.longitude ?? office.longitude)?.toString() ?? '',
-        'Bán kính (m)': '${office.radius.round()}',
-      },
-      save: (v) {
-        final lat = double.tryParse(v['Vĩ độ']!.replaceAll(',', '.'));
-        final lng = double.tryParse(v['Kinh độ']!.replaceAll(',', '.'));
-        final radius = double.tryParse(
-          v['Bán kính (m)']!.replaceAll(',', '.'),
-        );
-        final officeName = v['Tên văn phòng']!.trim();
-        if (officeName.isEmpty) {
-          throw ArgumentError('Nhập tên văn phòng.');
-        }
-        if (lat == null ||
-            lng == null ||
-            lat.abs() > 90 ||
-            lng.abs() > 180) {
-          throw ArgumentError(
-            'Nhập vĩ độ/kinh độ thập phân hợp lệ, hoặc bấm Lấy GPS để thiết lập.',
-          );
-        }
-        if (radius == null || radius < 20 || radius > 5000) {
-          throw ArgumentError('Bán kính phải từ 20 đến 5000 mét.');
-        }
-        return c.saveOffice(
-          Office(
-            name: officeName,
-            latitude: lat,
-            longitude: lng,
-            radius: radius,
-            qrSecret: office.qrSecret,
-          ),
-        );
-      },
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _OfficeConfigDialog(
+        controller: c,
+        initialPosition: position,
+      ),
     );
+  }
+
+  Widget _buildEmployeeTimesheetView() {
+    final myRecords = records
+        .where((a) => a.employeeId == c.user?.id)
+        .toList();
+
+    final monthRecords = myRecords.where((a) {
+      return a.checkIn.year == _selectedTimesheetMonth.year &&
+          a.checkIn.month == _selectedTimesheetMonth.month;
+    }).toList();
+
+    final totalDays = monthRecords.length;
+    final onTimeDays = monthRecords.where((a) => a.lateMinutes <= 0).length;
+    final lateDays = monthRecords.where((a) => a.lateMinutes > 0).length;
+    final totalHours = monthRecords.fold<double>(0, (s, a) => s + a.hours);
+
+    final daysInMonth = DateTime(
+      _selectedTimesheetMonth.year,
+      _selectedTimesheetMonth.month + 1,
+      0,
+    ).day;
+    final firstWeekday = DateTime(
+      _selectedTimesheetMonth.year,
+      _selectedTimesheetMonth.month,
+      1,
+    ).weekday; // 1: Mon, 7: Sun
+
+    final now = DateTime.now();
+
+    return list([
+      // Card bộ lọc chọn Tháng
+      Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0F7C8A).withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left_rounded, size: 28),
+              onPressed: () {
+                setState(() {
+                  _selectedTimesheetMonth = DateTime(
+                    _selectedTimesheetMonth.year,
+                    _selectedTimesheetMonth.month - 1,
+                    1,
+                  );
+                });
+              },
+            ),
+            Row(
+              children: [
+                const Icon(Icons.calendar_month_rounded, color: Color(0xFF0F7C8A), size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right_rounded, size: 28),
+              onPressed: () {
+                setState(() {
+                  _selectedTimesheetMonth = DateTime(
+                    _selectedTimesheetMonth.year,
+                    _selectedTimesheetMonth.month + 1,
+                    1,
+                  );
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+
+      // 4 metrics tháng
+      LayoutBuilder(
+        builder: (ctx, constraints) {
+          final w = constraints.maxWidth;
+          return Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              metric('Số ngày công', '$totalDays ngày', Icons.fact_check_rounded, const Color(0xFF0F7C8A), w),
+              metric('Đúng giờ', '$onTimeDays ngày', Icons.check_circle_rounded, const Color(0xFF16A34A), w),
+              metric('Đi muộn', '$lateDays ngày', Icons.warning_amber_rounded, const Color(0xFFEA580C), w),
+              metric('Tổng giờ làm', '${totalHours.toStringAsFixed(1)}h', Icons.schedule_rounded, const Color(0xFF6366F1), w),
+            ],
+          );
+        },
+      ),
+
+      const SizedBox(height: 16),
+
+      // Mini Calendar trực quan
+      Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.calendar_view_month_rounded, size: 18, color: Color(0xFF0F7C8A)),
+                SizedBox(width: 8),
+                Text(
+                  'Lịch làm việc tháng',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _WeekdayHeader('T2'),
+                _WeekdayHeader('T3'),
+                _WeekdayHeader('T4'),
+                _WeekdayHeader('T5'),
+                _WeekdayHeader('T6'),
+                _WeekdayHeader('T7', isWeekend: true),
+                _WeekdayHeader('CN', isWeekend: true),
+              ],
+            ),
+            const Divider(height: 16),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: 42,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+                childAspectRatio: 1.0,
+              ),
+              itemBuilder: (ctx, index) {
+                final dayNumber = index - (firstWeekday - 1) + 1;
+                if (dayNumber < 1 || dayNumber > daysInMonth) {
+                  return const SizedBox.shrink();
+                }
+
+                final targetDate = DateTime(
+                  _selectedTimesheetMonth.year,
+                  _selectedTimesheetMonth.month,
+                  dayNumber,
+                );
+
+                final dayRecords = monthRecords.where((a) =>
+                    a.checkIn.year == targetDate.year &&
+                    a.checkIn.month == targetDate.month &&
+                    a.checkIn.day == targetDate.day).toList();
+
+                final isToday = now.year == targetDate.year &&
+                    now.month == targetDate.month &&
+                    now.day == targetDate.day;
+
+                Color bg = const Color(0xFFF8FAFC);
+                Color textCol = const Color(0xFF334155);
+                Widget? indicator;
+
+                if (dayRecords.isNotEmpty) {
+                  final anyLate = dayRecords.any((a) => a.lateMinutes > 0);
+                  if (anyLate) {
+                    bg = const Color(0xFFFFF7ED);
+                    textCol = const Color(0xFFC2410C);
+                    indicator = Container(
+                      width: 5,
+                      height: 5,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFEA580C),
+                        shape: BoxShape.circle,
+                      ),
+                    );
+                  } else {
+                    bg = const Color(0xFFF0FDF4);
+                    textCol = const Color(0xFF15803D);
+                    indicator = Container(
+                      width: 5,
+                      height: 5,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF16A34A),
+                        shape: BoxShape.circle,
+                      ),
+                    );
+                  }
+                }
+
+                return Container(
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: isToday
+                        ? Border.all(color: const Color(0xFF0F7C8A), width: 1.8)
+                        : Border.all(color: const Color(0xFFE2E8F0), width: 0.8),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '$dayNumber',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isToday ? FontWeight.w800 : FontWeight.w600,
+                          color: textCol,
+                        ),
+                      ),
+                      if (indicator != null) ...[
+                        const SizedBox(height: 2),
+                        indicator,
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+
+      // Danh sách chấm công chi tiết trong tháng
+      Section(
+        title: 'Bản ghi chấm công Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
+        child: monthRecords.isEmpty
+            ? const EmptyState('Không có dữ liệu chấm công nào trong tháng này.')
+            : Column(
+                children: (monthRecords..sort((a, b) => b.checkIn.compareTo(a.checkIn)))
+                    .map(attendanceTile)
+                    .toList(),
+              ),
+      ),
+    ]);
   }
 
   Widget history() {
@@ -5400,6 +5707,480 @@ class _AttendanceDetailDialogState extends State<_AttendanceDetailDialog> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _WeekdayHeader extends StatelessWidget {
+  final String label;
+  final bool isWeekend;
+  const _WeekdayHeader(this.label, {this.isWeekend = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: isWeekend ? const Color(0xFFEA580C) : const Color(0xFF64748B),
+        ),
+      ),
+    );
+  }
+}
+
+class _OfficeConfigDialog extends StatefulWidget {
+  final AppController controller;
+  final Position? initialPosition;
+
+  const _OfficeConfigDialog({
+    required this.controller,
+    this.initialPosition,
+  });
+
+  @override
+  State<_OfficeConfigDialog> createState() => _OfficeConfigDialogState();
+}
+
+class _OfficeConfigDialogState extends State<_OfficeConfigDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _latCtrl;
+  late final TextEditingController _lngCtrl;
+  late final TextEditingController _radiusCtrl;
+  final TextEditingController _addressSearchCtrl = TextEditingController();
+
+  bool _searchingAddress = false;
+  bool _locatingGps = false;
+  bool _saving = false;
+  String? _statusMessage;
+  bool _isSuccess = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final office = widget.controller.data.office;
+    final name = office.name == 'Van phong chinh' ? 'Văn phòng chính' : office.name;
+    _nameCtrl = TextEditingController(text: name);
+    _latCtrl = TextEditingController(
+      text: (widget.initialPosition?.latitude ?? office.latitude)?.toString() ?? '',
+    );
+    _lngCtrl = TextEditingController(
+      text: (widget.initialPosition?.longitude ?? office.longitude)?.toString() ?? '',
+    );
+    _radiusCtrl = TextEditingController(
+      text: office.radius > 0 ? '${office.radius.round()}' : '1000',
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _latCtrl.dispose();
+    _lngCtrl.dispose();
+    _radiusCtrl.dispose();
+    _addressSearchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _searchByAddress() async {
+    final query = _addressSearchCtrl.text.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _statusMessage = 'Vui lòng nhập địa chỉ cần tìm (VD: Quận 1, Võ Văn Ngân, TP.HCM...)';
+        _isSuccess = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _searchingAddress = true;
+      _statusMessage = 'Đang tra cứu tọa độ từ địa chỉ...';
+      _isSuccess = true;
+    });
+
+    try {
+      final locations = await geo.Geocoding().locationFromAddress(query);
+      if (locations.isEmpty) {
+        throw Exception('Không tìm thấy tọa độ.');
+      }
+      final loc = locations.first;
+      setState(() {
+        _latCtrl.text = loc.latitude.toString();
+        _lngCtrl.text = loc.longitude.toString();
+        _statusMessage = 'Đã tìm thấy tọa độ theo địa chỉ thành công!';
+        _isSuccess = true;
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Không tìm thấy địa chỉ "$query". Hãy thử nhập thêm tên quận hoặc thành phố.';
+        _isSuccess = false;
+      });
+    } finally {
+      if (mounted) setState(() => _searchingAddress = false);
+    }
+  }
+
+  Future<void> _pinCurrentLocation() async {
+    setState(() {
+      _locatingGps = true;
+      _statusMessage = 'Đang lấy GPS chính xác từ thiết bị của bạn...';
+      _isSuccess = true;
+    });
+
+    try {
+      final pos = await acquirePosition();
+      setState(() {
+        _latCtrl.text = pos.latitude.toString();
+        _lngCtrl.text = pos.longitude.toString();
+        _statusMessage = 'Đã ghim vị trí máy bạn thành tọa độ văn phòng!';
+        _isSuccess = true;
+      });
+
+      try {
+        final placemarks = await geo.Geocoding().placemarkFromCoordinates(pos.latitude, pos.longitude);
+        if (placemarks.isNotEmpty && _addressSearchCtrl.text.isEmpty) {
+          final p = placemarks.first;
+          final parts = [p.street, p.subAdministrativeArea, p.administrativeArea]
+              .whereType<String>()
+              .where((s) => s.isNotEmpty)
+              .join(', ');
+          if (parts.isNotEmpty) {
+            _addressSearchCtrl.text = parts;
+          }
+        }
+      } catch (_) {}
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Lỗi lấy GPS: $e';
+        _isSuccess = false;
+      });
+    } finally {
+      if (mounted) setState(() => _locatingGps = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final name = _nameCtrl.text.trim();
+    final lat = double.tryParse(_latCtrl.text.replaceAll(',', '.'));
+    final lng = double.tryParse(_lngCtrl.text.replaceAll(',', '.'));
+    final radius = double.tryParse(_radiusCtrl.text.replaceAll(',', '.'));
+
+    if (name.isEmpty) {
+      setState(() {
+        _statusMessage = 'Vui lòng nhập tên văn phòng.';
+        _isSuccess = false;
+      });
+      return;
+    }
+    if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) {
+      setState(() {
+        _statusMessage = 'Tọa độ không hợp lệ. Vui lòng bấm tìm địa chỉ hoặc bấm Ghim GPS máy tôi.';
+        _isSuccess = false;
+      });
+      return;
+    }
+    if (radius == null || radius < 10) {
+      setState(() {
+        _statusMessage = 'Bán kính tối thiểu là 10 mét.';
+        _isSuccess = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _statusMessage = null;
+    });
+
+    try {
+      final old = widget.controller.data.office;
+      final newOffice = Office(
+        name: name,
+        latitude: lat,
+        longitude: lng,
+        radius: radius,
+        qrSecret: old.qrSecret,
+      );
+      await widget.controller.saveOffice(newOffice);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã cập nhật vị trí văn phòng thành công! (Bán kính: ${radius.round()}m)'),
+            backgroundColor: const Color(0xFF0F7C8A),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Lỗi lưu: ${e.toString().replaceFirst(RegExp(r'^(Exception: |StateError: )'), '')}';
+          _isSuccess = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _radiusChip(String label, double val) {
+    final current = double.tryParse(_radiusCtrl.text.replaceAll(',', '.'));
+    final selected = current != null && (current - val).abs() < 1;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) {
+        setState(() {
+          _radiusCtrl.text = val.round().toString();
+        });
+      },
+      selectedColor: const Color(0xFF0F7C8A).withValues(alpha: 0.15),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+        color: selected ? const Color(0xFF0F7C8A) : const Color(0xFF475569),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: const Row(
+        children: [
+          Icon(Icons.location_on_rounded, color: Color(0xFF0F7C8A), size: 24),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Cấu hình vị trí văn phòng',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Thông báo hướng dẫn ngắn gọn
+              const Text(
+                'Bạn có thể nhập địa chỉ bằng chữ hoặc bấm nút ghim GPS máy của bạn để làm vị trí văn phòng chấm công.',
+                style: TextStyle(fontSize: 13, color: Color(0xFF64748B), height: 1.4),
+              ),
+              const SizedBox(height: 16),
+
+              // KHỐI 1: TÌM KIẾM THEO ĐỊA CHỈ THỰC TẾ
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.search_rounded, size: 16, color: Color(0xFF0F7C8A)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Tìm vị trí theo địa chỉ:',
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF0F172A)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _addressSearchCtrl,
+                            decoration: const InputDecoration(
+                              hintText: 'VD: Quận 1, Võ Văn Ngân, Hà Nội...',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => _searchByAddress(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.tonal(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F7C8A).withValues(alpha: 0.12),
+                            foregroundColor: const Color(0xFF0F7C8A),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          onPressed: _searchingAddress ? null : _searchByAddress,
+                          child: _searchingAddress
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F7C8A)),
+                                )
+                              : const Text('Tìm'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // KHỐI 2: GHIM GPS MÁY TÔI HIỆN TẠI (NÚT 1 CHẠM)
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F7C8A),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: _locatingGps ? null : _pinCurrentLocation,
+                icon: _locatingGps
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.my_location_rounded, size: 20),
+                label: Text(
+                  _locatingGps ? 'Đang đọc GPS máy...' : 'Ghim GPS vị trí máy tôi tại đây',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+              ),
+
+              if (_statusMessage != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _isSuccess ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isSuccess ? const Color(0xFFBBF7D0) : const Color(0xFFFECACA),
+                    ),
+                  ),
+                  child: Text(
+                    _statusMessage!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _isSuccess ? const Color(0xFF16A34A) : const Color(0xFFDC2626),
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+
+              // Tên văn phòng
+              TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Tên văn phòng',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: Icon(Icons.business_rounded, size: 20),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Vĩ độ & Kinh độ
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _latCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Vĩ độ (Latitude)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _lngCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Kinh độ (Longitude)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Bán kính cho phép
+              TextField(
+                controller: _radiusCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Bán kính cho phép chấm công (mét)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  suffixText: 'mét',
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Chips bán kính nhanh cho test
+              const Text(
+                'Chọn nhanh bán kính (khuyến nghị 50km để test tự do):',
+                style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  _radiusChip('100m', 100),
+                  _radiusChip('500m', 500),
+                  _radiusChip('2 km', 2000),
+                  _radiusChip('50 km (Test)', 50000),
+                  _radiusChip('500 km (Toàn quốc)', 500000),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF0F7C8A),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Lưu cấu hình'),
+        ),
+      ],
     );
   }
 }

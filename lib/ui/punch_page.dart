@@ -75,6 +75,7 @@ class _PunchPageState extends State<PunchPage> {
         .where(
           (a) =>
               a.employeeId == c.user?.id &&
+              a.shiftName.trim().toLowerCase() == s.name.trim().toLowerCase() &&
               dayKey(a.scheduledEnd) == dayKey(s.endOn(anchor)),
         )
         .firstOrNull;
@@ -86,9 +87,12 @@ class _PunchPageState extends State<PunchPage> {
     selectedShiftId = c.user?.shiftId;
     c.addListener(_changed);
     _loadFace();
-    // 2. GPS tự động chạy ngay khi mở màn chấm công
+    // 2. Tự động đồng bộ ca mới nhất từ server và chạy GPS
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _autoCheckGps();
+      if (mounted) {
+        c.syncAll();
+        _autoCheckGps();
+      }
     });
   }
 
@@ -104,7 +108,11 @@ class _PunchPageState extends State<PunchPage> {
 
   void _changed() {
     if (!mounted) return;
-    selectedShiftId ??= c.user?.shiftId;
+    if (c.user?.shiftId != null && selectedShiftId != c.user?.shiftId) {
+      selectedShiftId = c.user?.shiftId;
+    } else {
+      selectedShiftId ??= c.user?.shiftId;
+    }
     setState(() {});
   }
 
@@ -456,6 +464,132 @@ class _PunchPageState extends State<PunchPage> {
     return a.lateMinutes > 0 ? 'Đi trễ ${a.lateMinutes} phút' : 'Đúng giờ';
   }
 
+  // Xử lý khi bấm nút chấm công: nếu chưa đủ điều kiện (GPS, Ca, Khuôn mặt) thì hướng dẫn chi tiết
+  void _handlePunchTap({
+    required bool canPunch,
+    required bool completed,
+    required bool inOpenShift,
+  }) {
+    if (completed) {
+      message(context, 'Bạn đã hoàn tất cả giờ vào và giờ ra của ca làm này hôm nay!');
+      return;
+    }
+    if (shift == null && !inOpenShift) {
+      message(context, 'Vui lòng chạm để chọn một ca làm việc từ danh sách ở trên!');
+      return;
+    }
+    if (!c.data.office.configured) {
+      message(context, 'Văn phòng chưa được cấu hình tọa độ GPS. Vui lòng liên hệ Admin.');
+      return;
+    }
+    if (enrolled != true) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.face_retouching_natural, color: Color(0xFF0F7C8A)),
+              SizedBox(width: 10),
+              Text('Chưa đăng ký khuôn mặt', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+            ],
+          ),
+          content: const Text(
+            'Hệ thống yêu cầu xác thực khuôn mặt khi chấm công. Bạn vui lòng chụp đăng ký khuôn mặt trước.',
+            style: TextStyle(fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Để sau')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _account();
+              },
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0F7C8A)),
+              child: const Text('Đăng ký ngay'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    if (!_gpsValid) {
+      final radius = c.data.office.radius.round();
+      final msg = StringBuffer();
+      if (gpsDetail != null && gpsDetail!.isNotEmpty) {
+        msg.writeln(gpsDetail);
+        msg.writeln();
+      }
+      msg.writeln('Bạn đang đứng cách văn phòng vượt quá bán kính quy định ($radius m).');
+      msg.writeln();
+      msg.writeln('💡 Gợi ý xử lý:');
+      msg.writeln('• Di chuyển vào trong bán kính văn phòng.');
+      msg.writeln('• Hoặc nếu đang test trên máy ảo/điện thoại, hãy đăng nhập Admin vào Quản lý → Cấu hình văn phòng và bấm "Lấy GPS hiện tại" để đặt tọa độ văn phòng tại nơi bạn đang đứng.');
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.location_off_rounded, color: Colors.orange),
+              SizedBox(width: 10),
+              Text('Chưa đạt điều kiện GPS', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+            ],
+          ),
+          content: Text(
+            msg.toString(),
+            style: const TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Đóng'),
+            ),
+            if (c.isAdmin)
+              OutlinedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  try {
+                    final pos = await acquirePosition();
+                    await c.saveOffice(
+                      Office(
+                        name: c.data.office.name,
+                        latitude: pos.latitude,
+                        longitude: pos.longitude,
+                        radius: c.data.office.radius,
+                        qrSecret: c.data.office.qrSecret,
+                      ),
+                    );
+                    await c.syncAll();
+                    await _autoCheckGps(force: true);
+                    if (mounted) message(context, 'Đã cập nhật vị trí văn phòng tại đây!');
+                  } catch (e) {
+                    if (mounted) message(context, e);
+                  }
+                },
+                icon: const Icon(Icons.pin_drop_rounded, size: 18),
+                label: const Text('Đặt VP tại đây'),
+                style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF0F7C8A)),
+              ),
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await c.syncAll();
+                await _autoCheckGps(force: true);
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Lấy lại GPS'),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0F7C8A)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    _run();
+  }
+
   // ============================================================================
   // GIAO DIỆN CHÍNH MÀN CHẤM CÔNG
   // ============================================================================
@@ -476,9 +610,15 @@ class _PunchPageState extends State<PunchPage> {
         _gpsValid &&
         enrolled == true;
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
+    return RefreshIndicator(
+      onRefresh: () async {
+        await c.syncAll();
+        await _autoCheckGps(force: true);
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
         _ShiftPicker(
           shifts: shifts,
           assignedId: c.user?.shiftId,
@@ -497,76 +637,104 @@ class _PunchPageState extends State<PunchPage> {
         const SizedBox(height: 16),
 
         // Khối thông tin văn phòng & Trạng thái GPS
-        Card(
-          elevation: 0,
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: Colors.grey.shade300),
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0B1F3A).withValues(alpha: 0.03),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(
-                      Icons.business_rounded,
-                      size: 20,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m',
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F7C8A).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
                       ),
+                      child: const Icon(
+                        Icons.business_rounded,
+                        size: 20,
+                        color: Color(0xFF0F7C8A),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            c.data.office.name,
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Color(0xFF0B1F3A)),
+                          ),
+                          Text(
+                            'Bán kính cho phép: ${c.data.office.radius.round()} m',
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Đồng bộ & Lấy lại vị trí GPS',
+                      icon: _gpsChecking
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F7C8A)),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 22, color: Color(0xFF0F7C8A)),
+                      onPressed: busy || _gpsChecking
+                          ? null
+                          : () async {
+                              await c.syncAll();
+                              await _autoCheckGps(force: true);
+                            },
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                const SizedBox(height: 10),
                 if (!c.data.office.configured)
                   const Text(
                     'Văn phòng chưa được cấu hình. Vui lòng liên hệ Admin.',
                     style: TextStyle(color: Colors.red, fontSize: 13),
                   ),
 
-                // 2. Trạng thái GPS tự động kèm nút icon làm mới nhỏ bên cạnh
+                // Trạng thái GPS tự động
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Icon(
                       _gpsValid ? Icons.check_circle_rounded : Icons.location_on_outlined,
-                      size: 18,
-                      color: _gpsValid ? Colors.green : Colors.orange,
+                      size: 20,
+                      color: _gpsValid ? const Color(0xFF059669) : const Color(0xFFEA580C),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         gpsDetail ??
                             (_gpsChecking
-                                ? 'Đang tự động kiểm tra vị trí GPS…'
+                                ? 'Đang tự động đo vị trí GPS…'
                                 : 'Chưa xác định GPS vị trí hiện tại'),
                         style: TextStyle(
                           fontSize: 12.5,
-                          color: _gpsValid ? Colors.green.shade800 : Colors.black87,
-                          fontWeight: _gpsValid ? FontWeight.w600 : FontWeight.normal,
+                          color: _gpsValid ? const Color(0xFF065F46) : const Color(0xFF9A3412),
+                          fontWeight: _gpsValid ? FontWeight.w600 : FontWeight.w500,
                         ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Lấy lại GPS hiện tại',
-                      icon: _gpsChecking
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh_rounded, size: 20),
-                      onPressed: busy || _gpsChecking
-                          ? null
-                          : () => _autoCheckGps(force: true),
                     ),
                   ],
                 ),
@@ -642,12 +810,19 @@ class _PunchPageState extends State<PunchPage> {
         // 4. Nút chính "Chấm công vào / ra"
         _PunchButton(
           busy: busy,
+          canPunch: canPunch,
           label: completed
               ? 'Đã hoàn tất ca này'
               : inOpenShift
               ? 'Chấm công ra'
               : 'Chấm công vào ca đã chọn',
-          onPressed: !busy && canPunch ? () => _run() : null,
+          onPressed: !busy
+              ? () => _handlePunchTap(
+                    canPunch: canPunch,
+                    completed: completed,
+                    inOpenShift: inOpenShift,
+                  )
+              : null,
         ),
 
         // 6. Nút phụ: Dùng vân tay thay thế (khi camera lỗi hoặc thất bại xác thực)
@@ -721,7 +896,8 @@ class _PunchPageState extends State<PunchPage> {
           ),
         ),
       ],
-    );
+    ),
+  );
   }
 }
 
@@ -744,7 +920,9 @@ class _ShiftPicker extends StatelessWidget {
       '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}';
   @override
   Widget build(BuildContext context) => Section(
-    title: 'Chọn ca làm',
+    icon: Icons.schedule_rounded,
+    iconColor: const Color(0xFF0F7C8A),
+    title: 'Chọn ca làm việc',
     subtitle: attendance == null
         ? (AppConfig.requireQr
             ? 'Bấm vào ca để chọn, rồi quét QR nơi làm việc'
@@ -756,34 +934,118 @@ class _ShiftPicker extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (shifts.isEmpty)
-          const Text(
-            'Admin chưa tạo ca làm. Liên hệ Admin trước khi chấm công.',
-          ),
-        for (final item in shifts)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Material(
-              color: item.id == selectedId
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-              child: ListTile(
-                enabled: !locked || item.name == attendance?.shiftName,
-                selected: item.id == selectedId,
-                title: Text(item.name),
-                subtitle: Text(
-                  '${_time(item.startMinute)} – ${_time(item.endMinute)}'
-                  '${item.id == assignedId ? ' • Ca đã chọn / phân' : ''}',
+          const EmptyState('Chưa có ca làm nào trên hệ thống.')
+        else
+          for (final item in shifts) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: item.id == selectedId
+                    ? const Color(0xFFF0FDFA)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: locked ? null : () => onSelect(item.id),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: item.id == selectedId
+                            ? const Color(0xFF0F7C8A)
+                            : const Color(0xFFE2E8F0),
+                        width: item.id == selectedId ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: item.id == selectedId
+                                ? const Color(0xFF0F7C8A).withValues(alpha: 0.12)
+                                : const Color(0xFFF1F5F9),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.access_time_rounded,
+                            size: 18,
+                            color: item.id == selectedId
+                                ? const Color(0xFF0F7C8A)
+                                : const Color(0xFF64748B),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    item.name,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14.5,
+                                      color: item.id == selectedId
+                                          ? const Color(0xFF0F7C8A)
+                                          : const Color(0xFF0B1F3A),
+                                    ),
+                                  ),
+                                  if (item.id == assignedId) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFEFF6FF),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                                      ),
+                                      child: const Text(
+                                        'Ca được phân',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1D4ED8),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                '${_time(item.startMinute)} – ${_time(item.endMinute)} • Cho phép trễ ${item.grace}p',
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          item.id == selectedId
+                              ? Icons.check_circle_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                          color: item.id == selectedId
+                              ? const Color(0xFF0F7C8A)
+                              : const Color(0xFFCBD5E1),
+                          size: 22,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                trailing: item.id == selectedId
-                    ? const Icon(Icons.check_circle)
-                    : const Icon(Icons.radio_button_unchecked),
-                onTap: locked ? null : () => onSelect(item.id),
               ),
             ),
-          ),
+          ],
         if (attendance != null)
-          Text('Giờ vào thực tế: ${clock(attendance!.checkIn)}'),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Giờ vào thực tế: ${clock(attendance!.checkIn)}',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0F7C8A)),
+            ),
+          ),
       ],
     ),
   );
@@ -791,32 +1053,66 @@ class _ShiftPicker extends StatelessWidget {
 
 class _PunchButton extends StatelessWidget {
   final bool busy;
+  final bool canPunch;
   final String label;
   final VoidCallback? onPressed;
-  const _PunchButton({required this.busy, required this.label, this.onPressed});
+  const _PunchButton({
+    required this.busy,
+    required this.canPunch,
+    required this.label,
+    this.onPressed,
+  });
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: double.infinity,
-    child: FilledButton.icon(
-      onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        backgroundColor: const Color(0xFF0F7C8A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+  Widget build(BuildContext context) {
+    final isOut = label.contains('ra');
+    final isDisabled = onPressed == null;
+
+    final Color bgColor = canPunch
+        ? (isOut ? const Color(0xFFEA580C) : const Color(0xFF0F7C8A))
+        : const Color(0xFF94A3B8); // Màu khi chưa đủ điều kiện vẫn nổi bật rõ ràng, bấm vào hướng dẫn
+
+    return Container(
+      width: double.infinity,
+      height: 56,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: isDisabled
+            ? null
+            : [
+                BoxShadow(
+                  color: bgColor.withValues(alpha: 0.25),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
       ),
-      icon: busy
-          ? const SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-            )
-          : const Icon(Icons.face_retouching_natural_rounded),
-      label: Text(
-        busy ? 'Đang xử lý…' : label,
-        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: bgColor,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: const Color(0xFFE2E8F0),
+          disabledForegroundColor: const Color(0xFF94A3B8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        icon: busy
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : Icon(
+                isOut ? Icons.logout_rounded : Icons.face_retouching_natural_rounded,
+                size: 22,
+              ),
+        label: Text(
+          busy ? 'Đang xác thực & gửi giờ…' : label,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 // 3. Danh sách bước linh hoạt: 3 bước khi requireQr = false, 4 bước khi requireQr = true

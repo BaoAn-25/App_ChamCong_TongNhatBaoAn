@@ -167,16 +167,32 @@ class AppController extends ChangeNotifier {
         shiftRepo.list(),
         attendanceRepo.list(),
         requestRepo.list(),
-        isStaff ? employeeRepo.list() : Future.value([_user!]),
+        isStaff ? employeeRepo.list() : auth.getMe(),
         departmentRepo.list(),
       ]);
       if (_user?.id != userId) return;
+
+      List<Employee> employeeList;
+      if (isStaff) {
+        employeeList = (results[4] as List<Employee>?) ?? <Employee>[];
+        final me = employeeList.where((e) => e.id == userId).firstOrNull;
+        if (me != null) _user = me;
+      } else {
+        final me = results[4] as Employee?;
+        if (me != null) {
+          _user = me;
+          employeeList = [me];
+        } else {
+          employeeList = [_user!];
+        }
+      }
+
       data = AppData(
         office: results[0] as Office,
         shifts: results[1] as List<Shift>,
         attendance: results[2] as List<Attendance>,
         requests: results[3] as List<WorkRequest>,
-        employees: results[4] as List<Employee>,
+        employees: employeeList,
         departments: results[5] as List<Department>,
       );
       lastSyncedAt = DateTime.now();

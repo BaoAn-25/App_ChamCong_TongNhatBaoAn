@@ -148,31 +148,43 @@ class _FaceSettingsCardState extends State<FaceSettingsCard> {
 
   @override
   Widget build(BuildContext context) => Section(
-    title: 'Khuôn mặt của bạn',
-    subtitle: 'Camera trực tiếp cho giờ vào, giờ ra và đăng nhập.',
+    title: 'Xác thực khuôn mặt',
+    subtitle: 'Nhận diện khuôn mặt khi chấm công và đăng nhập nhanh',
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.face_retouching_natural),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F7C8A).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.face_retouching_natural, color: Color(0xFF0F7C8A), size: 22),
+          ),
           title: Text(
             enrolled == null
-                ? 'Chưa tải được trạng thái'
+                ? 'Đang kiểm tra...'
                 : enrolled!
-                ? 'Đã đăng ký mẫu'
-                : 'Chưa đăng ký mẫu',
+                ? 'Đã đăng ký khuôn mặt'
+                : 'Chưa đăng ký khuôn mặt',
+            style: const TextStyle(fontWeight: FontWeight.w700),
           ),
-          subtitle: const Text(
-            'QR và GPS vẫn bắt buộc. Đây là đối sánh ảnh, chưa có cơ chế chống ảnh giả hoặc video phát lại.',
+          subtitle: Text(
+            enrolled == true
+                ? 'Dữ liệu khuôn mặt đã được bảo mật để xác thực khi vào/ra ca.'
+                : 'Đăng ký khuôn mặt để bắt đầu chấm công vào và ra ca.',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
           ),
         ),
         if (enrolled != null)
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Cho phép đăng nhập bằng camera + OTP'),
+            title: const Text('Đăng nhập bằng camera khuôn mặt', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
             subtitle: const Text(
-              'Lựa chọn được lưu khi đăng ký hoặc đăng ký lại mẫu bằng OTP.',
+              'Xác thực khuôn mặt + OTP để đăng nhập vào ứng dụng.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
             ),
             value: allowLogin,
             onChanged: busy

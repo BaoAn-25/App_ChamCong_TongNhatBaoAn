@@ -271,14 +271,25 @@ class AppTheme {
         ),
       ),
 
-      // Chip bo tròn 999
+      // Chip bo tròn 999 với màu sắc và độ tương phản cao, không bao giờ bị trùng màu
       chipTheme: ChipThemeData(
-        shape: RoundedRectangleBorder(borderRadius: radiusChip),
-        side: BorderSide.none,
+        shape: RoundedRectangleBorder(
+          borderRadius: radiusChip,
+          side: const BorderSide(color: Color(0xFFE2E8F0), width: 1),
+        ),
+        backgroundColor: const Color(0xFFF1F5F9),
+        selectedColor: const Color(0xFFCCFBF1),
+        disabledColor: const Color(0xFFE2E8F0),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         labelStyle: GoogleFonts.beVietnamPro(
           fontSize: 12,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF334155), // Màu chữ unselected tương phản cao
+        ),
+        secondaryLabelStyle: GoogleFonts.beVietnamPro(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: const Color(0xFF0F766E), // Màu chữ selected Teal đậm nét
         ),
       ),
     );

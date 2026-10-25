@@ -16,67 +16,135 @@ class Section extends StatelessWidget {
   final String? subtitle;
   final Widget child;
   final Widget? action;
+  final IconData? icon;
+  final Color? iconColor;
+
   const Section({
     super.key,
     required this.title,
     this.subtitle,
     required this.child,
     this.action,
+    this.icon,
+    this.iconColor,
   });
+
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 380 ? 16 : 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (subtitle != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 5),
-                        child: Text(
-                          subtitle!,
-                          style: const TextStyle(color: Color(0xFF637487)),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) {
+    final primaryTeal = const Color(0xFF0F7C8A);
+    final themeIconColor = iconColor ?? primaryTeal;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0B1F3A).withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
-          if (action != null)
-            Padding(padding: const EdgeInsets.only(top: 12), child: action),
-          const SizedBox(height: 18),
-          child,
+          BoxShadow(
+            color: const Color(0xFF0B1F3A).withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
         ],
       ),
-    ),
-  );
+      child: Padding(
+        padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 380 ? 16 : 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: themeIconColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: themeIconColor, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF0B1F3A),
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      if (subtitle != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(
+                            subtitle!,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                ?action,
+              ],
+            ),
+            const SizedBox(height: 16),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class EmptyState extends StatelessWidget {
   final String text;
-  const EmptyState(this.text, {super.key});
+  final IconData icon;
+
+  const EmptyState(this.text, {super.key, this.icon = Icons.inbox_outlined});
+
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 24),
+    padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
     child: Center(
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.inbox_outlined, size: 38, color: Color(0xFF8094A5)),
-          const SizedBox(height: 10),
-          Text(text, textAlign: TextAlign.center),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 32, color: const Color(0xFF64748B)),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13.5,
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w500,
+              height: 1.4,
+            ),
+          ),
         ],
       ),
     ),

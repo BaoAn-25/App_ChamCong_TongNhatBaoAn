@@ -374,10 +374,12 @@ class _StatsPageState extends State<StatsPage> {
           ),
         ),
 
-        // AI Insights
+        // Cảnh báo & Nhắc nhở chấm công
         Section(
-          title: '🤖 Phân tích AI',
-          subtitle: 'Phát hiện bất thường & gợi ý cải thiện',
+          icon: Icons.notifications_active_outlined,
+          iconColor: const Color(0xFFEA580C),
+          title: 'Nhắc nhở & Cảnh báo',
+          subtitle: 'Phát hiện bất thường: đi trễ, thiếu check-out, giờ công thấp',
           child: Column(
             children: _insights.map((item) => Padding(
               padding: const EdgeInsets.only(bottom: 10),

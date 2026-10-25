@@ -18,6 +18,8 @@ import 'punch_page.dart';
 import 'stats_page.dart';
 import 'biometric_page.dart';
 import 'face_page.dart';
+import '../widgets/attendance_detail_sheet.dart';
+import '../screens/admin/attendance_map_screen.dart';
 
 class HomePage extends StatefulWidget {
   final AppController controller;
@@ -34,6 +36,7 @@ class _HomePageState extends State<HomePage> {
   String? deptFilter;
   String? _avatarBase64;
   DateTimeRange? historyRange;
+  bool _staffExpanded = false;
 
   @override
   void initState() {
@@ -423,22 +426,19 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final pendingCount = c.data.requests
+        .where((r) => r.status == 'pending' && (c.isStaff || r.employeeId == c.user?.id))
+        .length;
+
     final labels = [
       'Tổng quan',
-      c.isStaff ? 'Quản lý' : 'Chấm công',
+      c.isStaff ? 'Nhân sự' : 'Chấm công',
       'Bảng công',
       'Thống kê',
       'Đơn từ',
       'Tài khoản',
     ];
-    final icons = [
-      Icons.space_dashboard_outlined,
-      c.isStaff ? Icons.manage_accounts_outlined : Icons.fingerprint,
-      Icons.calendar_month_outlined,
-      Icons.bar_chart_rounded,
-      Icons.assignment_outlined,
-      Icons.person_outline,
-    ];
+
     final wide = MediaQuery.sizeOf(context).width >= 900;
     final content = switch (page) {
       0 => dashboard(),
@@ -448,40 +448,97 @@ class _HomePageState extends State<HomePage> {
       4 => requests(),
       _ => profile(),
     };
+
+    final currentTitle = labels[page < labels.length ? page : 0];
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              labels[page],
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              currentTitle,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
             ),
-            const Text(
-              'Chấm công • Nhóm 09',
-              style: TextStyle(fontSize: 10, letterSpacing: 1),
+            Text(
+              c.lastSyncedAt == null
+                  ? 'Chấm công thông minh • Nhóm 09'
+                  : 'Cập nhật ${clock(c.lastSyncedAt)} • Kéo để làm mới',
+              style: const TextStyle(
+                fontSize: 11,
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Chip(
-              avatar: Icon(
-                c.isAdmin
-                    ? Icons.shield_outlined
+          IconButton(
+            tooltip: 'Làm mới dữ liệu',
+            icon: c.isSyncing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF0F7C8A),
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded, size: 22),
+            onPressed: c.isSyncing ? null : () => c.syncAll(),
+          ),
+          Container(
+            margin: const EdgeInsets.only(right: 16, left: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: c.isAdmin
+                  ? const Color(0xFF0F7C8A).withValues(alpha: 0.1)
+                  : c.user?.role == 'manager'
+                  ? Colors.deepPurple.withValues(alpha: 0.1)
+                  : const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: c.isAdmin
+                    ? const Color(0xFF0F7C8A).withValues(alpha: 0.3)
                     : c.user?.role == 'manager'
-                    ? Icons.supervisor_account_outlined
-                    : Icons.badge_outlined,
-                size: 17,
+                    ? Colors.deepPurple.withValues(alpha: 0.3)
+                    : const Color(0xFFCBD5E1),
               ),
-              label: Text(
-                c.isAdmin
-                    ? 'Admin'
-                    : c.user?.role == 'manager'
-                    ? 'Quản lý'
-                    : 'Nhân viên',
-              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  c.isAdmin
+                      ? Icons.shield_rounded
+                      : c.user?.role == 'manager'
+                      ? Icons.supervisor_account_rounded
+                      : Icons.badge_rounded,
+                  size: 13,
+                  color: c.isAdmin
+                      ? const Color(0xFF0F7C8A)
+                      : c.user?.role == 'manager'
+                      ? Colors.deepPurple
+                      : const Color(0xFF475569),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  c.isAdmin
+                      ? 'Admin'
+                      : c.user?.role == 'manager'
+                      ? 'Quản lý'
+                      : 'Nhân viên',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: c.isAdmin
+                        ? const Color(0xFF0F7C8A)
+                        : c.user?.role == 'manager'
+                        ? Colors.deepPurple
+                        : const Color(0xFF475569),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -489,60 +546,96 @@ class _HomePageState extends State<HomePage> {
       body: Column(
         children: [
           if (performing || c.isSyncing)
-            const LinearProgressIndicator(minHeight: 2),
-          Material(
-            color: c.syncError == null
-                ? const Color(0xFFEDF6F5)
-                : const Color(0xFFFFF3E5),
-            child: ListTile(
-              dense: true,
-              leading: Icon(
-                c.syncError != null
-                    ? Icons.cloud_off_outlined
-                    : c.isSyncing
-                    ? Icons.sync
-                    : Icons.cloud_done_outlined,
-                color: c.syncError == null
-                    ? const Color(0xFF087F8C)
-                    : const Color(0xFF9A5700),
-              ),
-              title: Text(
-                c.isSyncing
-                    ? 'Đang cập nhật dữ liệu…'
-                    : c.syncError ??
-                          (c.lastSyncedAt == null
-                              ? 'Chưa đồng bộ dữ liệu'
-                              : 'Đã cập nhật lúc ${TimeOfDay.fromDateTime(c.lastSyncedAt!).format(context)}'),
-              ),
-              subtitle: c.syncError == null
-                  ? null
-                  : const Text('Đang hiển thị dữ liệu lần tải trước.'),
-              trailing: IconButton(
-                tooltip: 'Tải lại dữ liệu',
-                onPressed: c.isSyncing ? null : c.syncAll,
-                icon: const Icon(Icons.refresh),
+            const LinearProgressIndicator(
+              minHeight: 2.5,
+              backgroundColor: Colors.transparent,
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0F7C8A)),
+            ),
+          if (c.syncError != null)
+            Material(
+              color: const Color(0xFFFFF7ED),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud_off_rounded, size: 16, color: Color(0xFFEA580C)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        c.syncError!,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF9A3412)),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: c.isSyncing ? null : () => c.syncAll(),
+                      child: const Text(
+                        'Thử lại',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F7C8A)),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (wide)
                   NavigationRail(
-                    selectedIndex: page,
+                    selectedIndex: switch (page) {
+                      0 => 0,
+                      1 => 1,
+                      2 => 2,
+                      4 => 3,
+                      _ => 4,
+                    },
                     labelType: NavigationRailLabelType.all,
                     onDestinationSelected: (v) => setState(() {
-                      page = v;
                       search = '';
+                      page = switch (v) {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        _ => 5,
+                      };
                     }),
-                    destinations: List.generate(
-                      labels.length,
-                      (i) => NavigationRailDestination(
-                        icon: Icon(icons[i]),
-                        label: Text(labels[i]),
+                    destinations: [
+                      const NavigationRailDestination(
+                        icon: Icon(Icons.space_dashboard_outlined),
+                        selectedIcon: Icon(Icons.space_dashboard_rounded),
+                        label: Text('Tổng quan'),
                       ),
-                    ),
+                      NavigationRailDestination(
+                        icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
+                        selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
+                        label: Text(c.isStaff ? 'Nhân sự' : 'Chấm công'),
+                      ),
+                      const NavigationRailDestination(
+                        icon: Icon(Icons.calendar_month_outlined),
+                        selectedIcon: Icon(Icons.calendar_month_rounded),
+                        label: Text('Bảng công'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Badge(
+                          isLabelVisible: pendingCount > 0,
+                          label: Text('$pendingCount'),
+                          child: const Icon(Icons.assignment_outlined),
+                        ),
+                        selectedIcon: Badge(
+                          isLabelVisible: pendingCount > 0,
+                          label: Text('$pendingCount'),
+                          child: const Icon(Icons.assignment_turned_in_rounded),
+                        ),
+                        label: const Text('Đơn từ'),
+                      ),
+                      const NavigationRailDestination(
+                        icon: Icon(Icons.person_outline_rounded),
+                        selectedIcon: Icon(Icons.person_rounded),
+                        label: Text('Tài khoản'),
+                      ),
+                    ],
                   ),
                 Expanded(
                   child: Center(
@@ -560,50 +653,224 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: wide
           ? null
           : NavigationBar(
-              selectedIndex: page < 3 ? page : 3,
-              onDestinationSelected: (v) async {
-                if (v < 3) {
-                  setState(() {
-                    page = v;
-                    search = '';
-                  });
+              selectedIndex: switch (page) {
+                0 => 0,
+                1 => 1,
+                2 => 2,
+                4 => 3,
+                5 => 4, // Khi đang ở trang Tài khoản
+                _ => 0,
+              },
+              onDestinationSelected: (v) {
+                if (v == 4) {
+                  _showUtilitiesSheet();
                   return;
                 }
-                final chosen = await showModalBottomSheet<int>(
-                  context: context,
-                  showDragHandle: true,
-                  builder: (context) => SafeArea(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final i in [3, 4, 5])
-                          ListTile(
-                            leading: Icon(icons[i]),
-                            title: Text(labels[i]),
-                            selected: page == i,
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => Navigator.pop(context, i),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-                if (chosen != null && mounted) {
-                  setState(() {
-                    page = chosen;
-                    search = '';
-                  });
-                }
+                setState(() {
+                  search = '';
+                  page = switch (v) {
+                    0 => 0,
+                    1 => 1,
+                    2 => 2,
+                    3 => 4,
+                    _ => 0,
+                  };
+                });
               },
               destinations: [
-                for (var i = 0; i < 3; i++)
-                  NavigationDestination(icon: Icon(icons[i]), label: labels[i]),
+                const NavigationDestination(
+                  icon: Icon(Icons.space_dashboard_outlined),
+                  selectedIcon: Icon(Icons.space_dashboard_rounded),
+                  label: 'Tổng quan',
+                ),
                 NavigationDestination(
-                  icon: const Icon(Icons.grid_view_rounded),
-                  label: page >= 3 ? labels[page] : 'Tiện ích',
+                  icon: Icon(c.isStaff ? Icons.people_outline_rounded : Icons.fingerprint_rounded),
+                  selectedIcon: Icon(c.isStaff ? Icons.people_rounded : Icons.fingerprint_rounded),
+                  label: c.isStaff ? 'Nhân sự' : 'Chấm công',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.calendar_month_outlined),
+                  selectedIcon: Icon(Icons.calendar_month_rounded),
+                  label: 'Bảng công',
+                ),
+                NavigationDestination(
+                  icon: Badge(
+                    isLabelVisible: pendingCount > 0,
+                    label: Text('$pendingCount'),
+                    child: const Icon(Icons.assignment_outlined),
+                  ),
+                  selectedIcon: Badge(
+                    isLabelVisible: pendingCount > 0,
+                    label: Text('$pendingCount'),
+                    child: const Icon(Icons.assignment_turned_in_rounded),
+                  ),
+                  label: 'Đơn từ',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.widgets_outlined),
+                  selectedIcon: Icon(Icons.widgets_rounded),
+                  label: 'Tiện ích',
                 ),
               ],
             ),
+    );
+  }
+
+  // Bảng mở rộng Tiện ích nhanh theo yêu cầu
+  void _showUtilitiesSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                'Tiện ích & Tính năng mở rộng',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Truy cập nhanh các công cụ và cài đặt tài khoản',
+                style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 16),
+              _utilityItem(
+                title: 'Hồ sơ tài khoản & Bảo mật',
+                subtitle: 'Thông tin cá nhân, khuôn mặt & sinh trắc học',
+                icon: Icons.person_rounded,
+                color: const Color(0xFF0F7C8A),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() => page = 5);
+                },
+              ),
+              const SizedBox(height: 10),
+              _utilityItem(
+                title: 'Báo cáo thống kê & Chuyên cần',
+                subtitle: 'Xem biểu đồ giờ công, tỷ lệ đúng giờ và phân tích',
+                icon: Icons.bar_chart_rounded,
+                color: const Color(0xFF7C3AED),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() => page = 3);
+                },
+              ),
+              const SizedBox(height: 10),
+              _utilityItem(
+                title: 'Bản đồ chấm công theo ngày',
+                subtitle: 'Xem toàn cảnh vị trí chấm công và bán kính văn phòng',
+                icon: Icons.map_rounded,
+                color: const Color(0xFF0284C7),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AttendanceMapScreen(controller: c),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              _utilityItem(
+                title: 'Xác định vị trí GPS hiện tại',
+                subtitle: 'Kiểm tra tọa độ và địa chỉ GPS nơi bạn đang đứng',
+                icon: Icons.my_location_rounded,
+                color: const Color(0xFF059669),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showCurrentLocation();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _utilityItem({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: Color(0xFF94A3B8),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -624,7 +891,7 @@ class _HomePageState extends State<HomePage> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -638,23 +905,26 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, color: color, size: 20),
+              child: Icon(icon, color: color, size: 19),
             ),
-            const SizedBox(width: 10),
-            Text(
-              label,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-                color: Color(0xFF1E293B),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                  color: Color(0xFF1E293B),
+                ),
               ),
             ),
           ],
@@ -666,15 +936,30 @@ class _HomePageState extends State<HomePage> {
   Widget _pageHint(String title, String description, IconData icon) =>
       Container(
         margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFEAF4F4),
-          borderRadius: BorderRadius.circular(18),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0B1F3A).withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: const Color(0xFF087F8C)),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F7C8A).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: const Color(0xFF0F7C8A), size: 18),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -682,10 +967,21 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: Color(0xFF0B1F3A),
+                    ),
                   ),
-                  const SizedBox(height: 5),
-                  Text(description),
+                  const SizedBox(height: 3),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF64748B),
+                      height: 1.35,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -899,108 +1195,126 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
 
-      // Lối tắt tác vụ nhanh (Quick Actions)
-      Padding(
-        padding: const EdgeInsets.only(bottom: 20),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: c.isAdmin
-                ? [
-                    _quickActionItem(
-                      label: 'Thêm nhân viên',
-                      icon: Icons.person_add_alt_1_rounded,
-                      color: const Color(0xFF0284C7),
-                      onTap: () => editEmployee(),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Tạo ca làm',
-                      icon: Icons.more_time_rounded,
-                      color: const Color(0xFF0D9488),
-                      onTap: () => editShift(),
-                    ),
-                    if (AppConfig.requireQr) ...[
-                      const SizedBox(width: 10),
+      // Lối tắt tác vụ nhanh (Quick Actions) dạng lưới 2x2 trực quan
+      Container(
+        margin: const EdgeInsets.only(bottom: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(left: 2, bottom: 10),
+              child: Text(
+                'Thao tác nhanh',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0B1F3A),
+                ),
+              ),
+            ),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 2.3,
+              children: c.isAdmin
+                  ? [
                       _quickActionItem(
-                        label: 'QR Văn phòng',
-                        icon: Icons.qr_code_2_rounded,
+                        label: 'Thêm nhân viên',
+                        icon: Icons.person_add_alt_1_rounded,
+                        color: const Color(0xFF0284C7),
+                        onTap: () => editEmployee(),
+                      ),
+                      _quickActionItem(
+                        label: 'Tạo ca làm',
+                        icon: Icons.more_time_rounded,
+                        color: const Color(0xFF0D9488),
+                        onTap: () => editShift(),
+                      ),
+                      _quickActionItem(
+                        label: 'Duyệt đơn ($pending)',
+                        icon: Icons.fact_check_outlined,
+                        color: pending > 0
+                            ? const Color(0xFFEA580C)
+                            : const Color(0xFF64748B),
+                        onTap: () => setState(() => page = 4),
+                      ),
+                      _quickActionItem(
+                        label: 'Bản đồ chấm công',
+                        icon: Icons.map_rounded,
                         color: const Color(0xFF7C3AED),
-                        onTap: showOfficeQr,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AttendanceMapScreen(controller: c),
+                          ),
+                        ),
+                      ),
+                    ]
+                  : c.isManager
+                  ? [
+                      _quickActionItem(
+                        label: 'Duyệt đơn ($pending)',
+                        icon: Icons.fact_check_outlined,
+                        color: pending > 0
+                            ? const Color(0xFFEA580C)
+                            : const Color(0xFF64748B),
+                        onTap: () => setState(() => page = 4),
+                      ),
+                      _quickActionItem(
+                        label: 'Bảng công',
+                        icon: Icons.calendar_month_rounded,
+                        color: const Color(0xFF0284C7),
+                        onTap: () => setState(() => page = 2),
+                      ),
+                      _quickActionItem(
+                        label: 'Bản đồ chấm công',
+                        icon: Icons.map_rounded,
+                        color: const Color(0xFF7C3AED),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AttendanceMapScreen(controller: c),
+                          ),
+                        ),
+                      ),
+                      _quickActionItem(
+                        label: 'Báo cáo thống kê',
+                        icon: Icons.bar_chart_rounded,
+                        color: const Color(0xFF0D9488),
+                        onTap: () => setState(() => page = 3),
+                      ),
+                    ]
+                  : [
+                      _quickActionItem(
+                        label: 'Điểm danh ngay',
+                        icon: Icons.fingerprint_rounded,
+                        color: const Color(0xFF087F8C),
+                        onTap: () => setState(() => page = 1),
+                      ),
+                      _quickActionItem(
+                        label: 'Gửi đơn từ',
+                        icon: Icons.post_add_rounded,
+                        color: const Color(0xFFEA580C),
+                        onTap: () => setState(() => page = 4),
+                      ),
+                      _quickActionItem(
+                        label: 'Bảng công tháng',
+                        icon: Icons.calendar_month_rounded,
+                        color: const Color(0xFF0284C7),
+                        onTap: () => setState(() => page = 2),
+                      ),
+                      _quickActionItem(
+                        label: 'Thống kê công',
+                        icon: Icons.bar_chart_rounded,
+                        color: const Color(0xFF7C3AED),
+                        onTap: () => setState(() => page = 3),
                       ),
                     ],
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Duyệt đơn ($pending)',
-                      icon: Icons.fact_check_outlined,
-                      color: pending > 0
-                          ? const Color(0xFFEA580C)
-                          : const Color(0xFF64748B),
-                      onTap: () => setState(() => page = 4),
-                    ),
-                  ]
-                : c.isManager
-                ? [
-                    _quickActionItem(
-                      label: 'Duyệt đơn ($pending)',
-                      icon: Icons.fact_check_outlined,
-                      color: pending > 0
-                          ? const Color(0xFFEA580C)
-                          : const Color(0xFF64748B),
-                      onTap: () => setState(() => page = 4),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Thống kê',
-                      icon: Icons.bar_chart_rounded,
-                      color: const Color(0xFF7C3AED),
-                      onTap: () => setState(() => page = 3),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Bảng công',
-                      icon: Icons.calendar_month_rounded,
-                      color: const Color(0xFF0284C7),
-                      onTap: () => setState(() => page = 2),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Nhân sự',
-                      icon: Icons.groups_outlined,
-                      color: const Color(0xFF0D9488),
-                      onTap: () => setState(() => page = 1),
-                    ),
-                  ]
-                : [
-                    _quickActionItem(
-                      label: 'Điểm danh ngay',
-                      icon: Icons.fingerprint_rounded,
-                      color: const Color(0xFF087F8C),
-                      onTap: () => setState(() => page = 1),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Gửi đơn xin phép',
-                      icon: Icons.post_add_rounded,
-                      color: const Color(0xFFEA580C),
-                      onTap: () => setState(() => page = 4),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Thống kê',
-                      icon: Icons.bar_chart_rounded,
-                      color: const Color(0xFF7C3AED),
-                      onTap: () => setState(() => page = 3),
-                    ),
-                    const SizedBox(width: 10),
-                    _quickActionItem(
-                      label: 'Bảng công tháng',
-                      icon: Icons.calendar_month_rounded,
-                      color: const Color(0xFF0284C7),
-                      onTap: () => setState(() => page = 2),
-                    ),
-                  ],
-          ),
+            ),
+          ],
         ),
       ),
 
@@ -1011,36 +1325,44 @@ class _HomePageState extends State<HomePage> {
           runSpacing: 12,
           children: [
             metric(
-              c.isStaff ? 'Nhân viên hoạt động' : 'Ca tháng này',
+              c.isStaff ? 'Có mặt hôm nay' : 'Ca tháng này',
               c.isStaff
-                  ? '${c.data.employees.where((e) => e.active && !e.isStaff).length}'
+                  ? '${today.map((e) => e.employeeId).toSet().length} / ${c.data.employees.where((e) => !e.isStaff && e.active).length}'
                   : '${month.length}',
-              Icons.groups_outlined,
-              const Color(0xFF6366F1),
-              box.maxWidth,
-            ),
-            metric(
-              'Chấm công hôm nay',
-              '${today.length}',
               Icons.verified_outlined,
               const Color(0xFF10B981),
               box.maxWidth,
+              onTap: () => setState(() => page = 2),
             ),
             metric(
-              'Giờ hoàn tất / tháng',
-              month
-                  .fold<double>(0, (sum, a) => sum + a.hours)
-                  .toStringAsFixed(1),
+              c.isStaff ? 'Đi trễ hôm nay' : 'Giờ hoàn tất / tháng',
+              c.isStaff
+                  ? '${today.where((e) => e.lateMinutes > 0).length}'
+                  : month.fold<double>(0, (sum, a) => sum + a.hours).toStringAsFixed(1),
               Icons.access_time_rounded,
+              const Color(0xFFEA580C),
+              box.maxWidth,
+              onTap: () => setState(() => page = 2),
+            ),
+            metric(
+              c.isStaff ? 'Chưa check-out' : 'Số lần đi trễ',
+              c.isStaff
+                  ? '${today.where((e) => e.checkOut == null).length}'
+                  : '${month.where((a) => a.lateMinutes > 0).length}',
+              Icons.timer_outlined,
               const Color(0xFF0284C7),
               box.maxWidth,
+              onTap: () => setState(() => page = 2),
             ),
             metric(
-              'Đơn chờ duyệt',
-              '$pending',
+              c.isStaff ? 'Đơn chờ duyệt' : 'Đơn từ của tôi',
+              c.isStaff
+                  ? '$pending'
+                  : '${c.data.requests.where((r) => r.employeeId == c.user?.id).length}',
               Icons.pending_actions_rounded,
               pending > 0 ? const Color(0xFFEA580C) : const Color(0xFF64748B),
               box.maxWidth,
+              onTap: () => setState(() => page = 4),
             ),
           ],
         ),
@@ -1203,30 +1525,37 @@ class _HomePageState extends State<HomePage> {
       Section(
         title: 'Trợ lý giải thích chấm công',
         subtitle: 'Quy tắc minh bạch • Không tự sửa giờ công',
-        child: records.isEmpty
-            ? const EmptyState('Chưa có dữ liệu chấm công để phân tích.')
-            : Column(
-                children: records
-                    .take(4)
-                    .map(
-                      (a) => ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          a.lateMinutes > 0 ||
-                                  (a.checkOut == null &&
-                                      DateTime.now().isAfter(a.scheduledEnd))
-                              ? Icons.info_outline
-                              : Icons.check_circle_outline,
-                          color: const Color(0xFF087F8C),
-                        ),
-                        title: Text(
-                          '${c.isStaff ? '${employeeName(a.employeeId)} • ' : ''}${dateLabel(a.checkIn)}',
-                        ),
-                        subtitle: Text(a.explanation),
-                      ),
-                    )
-                    .toList(),
-              ),
+        child: () {
+          final explainRecords = (c.isStaff
+                  ? records
+                  : records.where((a) => a.employeeId == c.user?.id).toList())
+              .take(4)
+              .toList();
+          if (explainRecords.isEmpty) {
+            return const EmptyState('Chưa có dữ liệu chấm công để phân tích.');
+          }
+          return Column(
+            children: explainRecords
+                .map(
+                  (a) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      a.lateMinutes > 0 ||
+                              (a.checkOut == null &&
+                                  DateTime.now().isAfter(a.scheduledEnd))
+                          ? Icons.info_outline
+                          : Icons.check_circle_outline,
+                      color: const Color(0xFF087F8C),
+                    ),
+                    title: Text(
+                      '${c.isStaff ? '${employeeName(a.employeeId)} • ' : ''}${dateLabel(a.checkIn)}',
+                    ),
+                    subtitle: Text(a.explanation),
+                  ),
+                )
+                .toList(),
+          );
+        }(),
       ),
       Section(
         title: 'Hoạt động gần đây',
@@ -1253,88 +1582,262 @@ class _HomePageState extends State<HomePage> {
     String value,
     IconData icon,
     Color color,
-    double width,
-  ) => SizedBox(
+    double width, {
+    VoidCallback? onTap,
+  }) => SizedBox(
     width: width >= 700 ? (width - 36) / 4 : (width - 12) / 2,
-    child: Container(
-      padding: const EdgeInsets.all(16),
+    child: Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  if (onTap != null)
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                      color: Colors.grey.shade400,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget attendanceTile(Attendance a) {
+    final isLate = a.lateMinutes > 0;
+    final isMissingCheckout = a.checkOut == null && DateTime.now().isAfter(a.scheduledEnd);
+    final inShift = a.checkOut == null && !isMissingCheckout;
+    final empName = employeeName(a.employeeId);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: color.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: const Color(0xFF0B1F3A).withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          AttendanceDetailSheet.show(
+            context,
+            attendance: a,
+            employeeName: empName,
+            office: c.data.office,
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: isLate
+                    ? const Color(0xFFFFF7ED)
+                    : isMissingCheckout
+                    ? const Color(0xFFFEF2F2)
+                    : inShift
+                    ? const Color(0xFFEFF6FF)
+                    : const Color(0xFFECFDF5),
+                child: Text(
+                  empName.isNotEmpty ? empName[0].toUpperCase() : 'A',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: isLate
+                        ? const Color(0xFFEA580C)
+                        : isMissingCheckout
+                        ? const Color(0xFFDC2626)
+                        : inShift
+                        ? const Color(0xFF2563EB)
+                        : const Color(0xFF059669),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            c.isStaff ? empName : a.shiftName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14.5,
+                              color: Color(0xFF0B1F3A),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          a.checkOut == null
+                              ? (isMissingCheckout ? 'Thiếu giờ ra' : 'Đang làm')
+                              : '${a.hours.toStringAsFixed(1)} h',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                            color: isMissingCheckout
+                                ? const Color(0xFFDC2626)
+                                : inShift
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFF0F7C8A),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${dateLabel(a.checkIn)} • ${clock(a.checkIn)} → ${clock(a.checkOut)}${c.isStaff ? ' • ${a.shiftName}' : ''}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isLate
+                                ? const Color(0xFFFFF7ED)
+                                : isMissingCheckout
+                                ? const Color(0xFFFEF2F2)
+                                : inShift
+                                ? const Color(0xFFEFF6FF)
+                                : const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: isLate
+                                  ? const Color(0xFFFDBA74)
+                                  : isMissingCheckout
+                                  ? const Color(0xFFFCA5A5)
+                                  : inShift
+                                  ? const Color(0xFF93C5FD)
+                                  : const Color(0xFF6EE7B7),
+                              width: 0.8,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isLate
+                                    ? Icons.warning_amber_rounded
+                                    : isMissingCheckout
+                                    ? Icons.error_outline_rounded
+                                    : inShift
+                                    ? Icons.timelapse_rounded
+                                    : Icons.check_circle_outline_rounded,
+                                size: 12,
+                                color: isLate
+                                    ? const Color(0xFFEA580C)
+                                    : isMissingCheckout
+                                    ? const Color(0xFFDC2626)
+                                    : inShift
+                                    ? const Color(0xFF2563EB)
+                                    : const Color(0xFF059669),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                isLate
+                                    ? 'Đi trễ ${a.lateMinutes}p'
+                                    : isMissingCheckout
+                                    ? 'Chưa check-out'
+                                    : inShift
+                                    ? 'Đang trong ca'
+                                    : 'Đúng giờ',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: isLate
+                                      ? const Color(0xFFEA580C)
+                                      : isMissingCheckout
+                                      ? const Color(0xFFDC2626)
+                                      : inShift
+                                      ? const Color(0xFF2563EB)
+                                      : const Color(0xFF059669),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        const Icon(Icons.chevron_right_rounded, size: 18, color: Color(0xFF94A3B8)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            title,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+        ),
       ),
-    ),
-  );
-  Widget attendanceTile(Attendance a) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    leading: CircleAvatar(
-      backgroundColor: const Color(0xFFE3F5F2),
-      child: Text(
-        '${a.checkIn.day}',
-        style: const TextStyle(color: Color(0xFF087F8C)),
-      ),
-    ),
-    title: Text(c.isStaff ? employeeName(a.employeeId) : a.shiftName),
-    subtitle: Text(
-      '${dateLabel(a.checkIn)} • ${clock(a.checkIn)} → ${clock(a.checkOut)}\n${a.explanation}',
-    ),
-    isThreeLine: true,
-    trailing: Text(
-      a.checkOut == null
-          ? (DateTime.now().isAfter(a.scheduledEnd)
-                ? 'Thiếu giờ ra'
-                : 'Trong ca')
-          : '${a.hours.toStringAsFixed(1)} h',
-      style: const TextStyle(fontWeight: FontWeight.bold),
-    ),
-    onTap: () => showDialog<void>(
-      context: context,
-      builder: (context) => _AttendanceDetailDialog(
-        attendance: a,
-        employeeName: employeeName(a.employeeId),
-      ),
-    ),
-  );
+    );
+  }
   Widget management() {
     final employees = c.data.employees.where((e) {
       final matchesSearch = '${e.name} ${e.username} ${e.department}'
@@ -1363,41 +1866,63 @@ class _HomePageState extends State<HomePage> {
       ),
       if (c.isAdmin)
         Section(
-          title: 'Văn phòng & mã QR',
+          icon: Icons.business_rounded,
+          iconColor: const Color(0xFF0F7C8A),
+          title: 'Văn phòng & Vị trí GPS',
           subtitle: c.data.office.configured
-              ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m • Có thể ghim lại GPS chỗ đang đứng'
-              : 'Chưa cấu hình. Bấm Lấy GPS vị trí hiện tại ngay tại chỗ làm.',
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
+              ? '${c.data.office.name} • Bán kính ${c.data.office.radius.round()} m • Tọa độ: ${c.data.office.latitude?.toStringAsFixed(4)}, ${c.data.office.longitude?.toStringAsFixed(4)}'
+              : 'Chưa cấu hình. Bấm "Lấy GPS vị trí hiện tại" ngay tại công ty.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              FilledButton.icon(
-                onPressed: () => editOffice(),
-                icon: const Icon(Icons.location_on_outlined),
-                label: const Text('Cấu hình văn phòng'),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () => editOffice(),
+                    icon: const Icon(Icons.edit_location_alt_outlined),
+                    label: const Text('Cấu hình văn phòng'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F7C8A),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      try {
+                        final position = await acquirePosition();
+                        if (mounted) await editOffice(position);
+                      } catch (e) {
+                        if (mounted) message(context, e);
+                      }
+                    },
+                    icon: const Icon(Icons.my_location),
+                    label: const Text('Lấy GPS vị trí hiện tại'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AttendanceMapScreen(controller: c),
+                      ),
+                    ),
+                    icon: const Icon(Icons.map_rounded),
+                    label: const Text('Bản đồ chấm công'),
+                  ),
+                  if (AppConfig.requireQr)
+                    OutlinedButton.icon(
+                      onPressed: showOfficeQr,
+                      icon: const Icon(Icons.qr_code_2_rounded),
+                      label: const Text('Hiển thị QR động'),
+                    ),
+                ],
               ),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  try {
-                    final position = await acquirePosition();
-                    if (mounted) await editOffice(position);
-                  } catch (e) {
-                    if (mounted) message(context, e);
-                  }
-                },
-                icon: const Icon(Icons.my_location),
-                label: const Text('Lấy GPS vị trí hiện tại'),
-              ),
-              if (AppConfig.requireQr)
-                OutlinedButton.icon(
-                  onPressed: showOfficeQr,
-                  icon: const Icon(Icons.qr_code),
-                  label: const Text('Hiển thị QR động'),
-                ),
             ],
           ),
         ),
       Section(
+        icon: Icons.people_alt_rounded,
+        iconColor: const Color(0xFF0D9488),
         title: 'Nhân sự & Người dùng',
         subtitle: c.isAdmin
             ? '${c.data.employees.length} tài khoản trên hệ thống'
@@ -1405,6 +1930,16 @@ class _HomePageState extends State<HomePage> {
         action: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            IconButton(
+              tooltip: _staffExpanded ? 'Thu gọn danh sách' : 'Mở rộng toàn bộ danh sách',
+              onPressed: () => setState(() => _staffExpanded = !_staffExpanded),
+              icon: Icon(
+                _staffExpanded
+                    ? Icons.unfold_less_rounded
+                    : Icons.unfold_more_rounded,
+                color: const Color(0xFF087F8C),
+              ),
+            ),
             IconButton(
               tooltip: 'Xem bảng quyền hạn các vai trò',
               onPressed: showRolePermissionsInfo,
@@ -1523,257 +2058,362 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 14),
             if (employees.isEmpty)
               const EmptyState('Không có nhân viên phù hợp bộ lọc.'),
-            for (final e in employees)
-              Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: Colors.grey.shade200),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: e.isAdmin
-                        ? const Color(0xFFEDE9FE)
-                        : e.isManager
-                        ? const Color(0xFFCCFBF1)
-                        : const Color(0xFFE0F2FE),
-                    child: Icon(
-                      e.isAdmin
-                          ? Icons.shield_outlined
-                          : e.isManager
-                          ? Icons.supervisor_account_outlined
-                          : Icons.person_outline,
-                      color: e.isAdmin
-                          ? Colors.deepPurple
-                          : e.isManager
-                          ? Colors.teal
-                          : const Color(0xFF0284C7),
-                    ),
-                  ),
-                  title: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          e.name,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeInOutCubic,
+              alignment: Alignment.topCenter,
+              child: Column(
+                children: [
+                  for (final e in (_staffExpanded ||
+                          search.isNotEmpty ||
+                          roleFilter != 'all' ||
+                          deptFilter != null)
+                      ? employees
+                      : employees.take(5).toList())
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: Colors.grey.shade200),
                       ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
                         ),
-                        decoration: BoxDecoration(
-                          color: e.isAdmin
-                              ? Colors.deepPurple.shade50
+                        leading: CircleAvatar(
+                          backgroundColor: e.isAdmin
+                              ? const Color(0xFFEDE9FE)
                               : e.isManager
-                              ? Colors.cyan.shade50
-                              : Colors.teal.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: e.isAdmin
-                                ? Colors.deepPurple.shade200
+                              ? const Color(0xFFCCFBF1)
+                              : const Color(0xFFE0F2FE),
+                          child: Icon(
+                            e.isAdmin
+                                ? Icons.shield_outlined
                                 : e.isManager
-                                ? Colors.cyan.shade200
-                                : Colors.teal.shade200,
-                          ),
-                        ),
-                        child: Text(
-                          e.isAdmin
-                              ? 'ADMIN'
-                              : e.isManager
-                              ? 'QUẢN LÝ'
-                              : 'NHÂN VIÊN',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                                ? Icons.supervisor_account_outlined
+                                : Icons.person_outline,
                             color: e.isAdmin
                                 ? Colors.deepPurple
                                 : e.isManager
-                                ? Colors.cyan.shade800
-                                : Colors.teal.shade800,
+                                ? Colors.teal
+                                : const Color(0xFF0284C7),
                           ),
                         ),
-                      ),
-                      if (!e.active) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.red.shade200),
-                          ),
-                          child: const Text(
-                            'ĐÃ KHÓA',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}',
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.schedule,
-                            size: 13,
-                            color: e.shiftId == null
-                                ? Colors.orange.shade800
-                                : Colors.blue.shade700,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              c.data.shifts
-                                      .where((s) => s.id == e.shiftId)
-                                      .firstOrNull
-                                      ?.name ??
-                                  'Chưa chọn / phân ca',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: e.shiftId == null
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                color: e.shiftId == null
-                                    ? Colors.orange.shade800
-                                    : Colors.blue.shade700,
+                        title: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                e.name,
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  trailing: !c.isAdmin
-                      ? null
-                      : PopupMenuButton<String>(
-                          onSelected: (v) async {
-                            if (v == 'edit') {
-                              editEmployee(e);
-                            } else if (v == 'role') {
-                              changeRole(e);
-                            } else if (v == 'shift') {
-                              assignShift(e);
-                            } else if (v == 'toggle_lock') {
-                              final copy = Employee.fromJson(e.toJson())
-                                ..active = !e.active;
-                              await perform(
-                                () => c.saveEmployee(copy),
-                                e.active
-                                    ? 'Đã khóa tài khoản'
-                                    : 'Đã mở khóa tài khoản',
-                              );
-                            } else if (v == 'delete') {
-                              final ok = await confirm(
-                                context,
-                                'Xóa tài khoản ${e.name}? Tài khoản đã có lịch sử chỉ có thể khóa.',
-                              );
-                              if (ok && mounted) {
-                                await perform(() => c.deleteEmployee(e.id));
-                              }
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.edit_outlined, size: 18),
-                                  SizedBox(width: 8),
-                                  Text('Sửa thông tin'),
-                                ],
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: e.isAdmin
+                                    ? Colors.deepPurple.shade50
+                                    : e.isManager
+                                    ? Colors.cyan.shade50
+                                    : Colors.teal.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: e.isAdmin
+                                      ? Colors.deepPurple.shade200
+                                      : e.isManager
+                                      ? Colors.cyan.shade200
+                                      : Colors.teal.shade200,
+                                ),
+                              ),
+                              child: Text(
+                                e.isAdmin
+                                    ? 'ADMIN'
+                                    : e.isManager
+                                    ? 'QUẢN LÝ'
+                                    : 'NHÂN VIÊN',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: e.isAdmin
+                                      ? Colors.deepPurple
+                                      : e.isManager
+                                      ? Colors.cyan.shade800
+                                      : Colors.teal.shade800,
+                                ),
                               ),
                             ),
-                            const PopupMenuItem(
-                              value: 'role',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.admin_panel_settings_outlined,
-                                    size: 18,
-                                    color: Colors.deepPurple,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text('Phân quyền (Admin / Quản lý / NV)'),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'shift',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.access_time, size: 18),
-                                  SizedBox(width: 8),
-                                  Text('Phân ca làm việc'),
-                                ],
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'toggle_lock',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    e.active
-                                        ? Icons.lock_outline
-                                        : Icons.lock_open,
-                                    size: 18,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    e.active
-                                        ? 'Khóa tài khoản'
-                                        : 'Mở khóa tài khoản',
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete_outline,
-                                    size: 18,
+                            if (!e.active) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red.shade200),
+                                ),
+                                child: const Text(
+                                  'ĐÃ KHÓA',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
                                     color: Colors.red,
                                   ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Xóa tài khoản',
-                                    style: TextStyle(color: Colors.red),
-                                  ),
-                                ],
+                                ),
                               ),
+                            ],
+                          ],
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${e.username} • ${e.department.isEmpty ? 'Chưa có phòng ban' : e.department}',
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.schedule,
+                                  size: 13,
+                                  color: e.shiftId == null
+                                      ? Colors.orange.shade800
+                                      : Colors.blue.shade700,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    c.data.shifts
+                                            .where((s) => s.id == e.shiftId)
+                                            .firstOrNull
+                                            ?.name ??
+                                        'Chưa chọn / phân ca',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: e.shiftId == null
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      color: e.shiftId == null
+                                          ? Colors.orange.shade800
+                                          : Colors.blue.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
+                        trailing: !c.isAdmin
+                            ? null
+                            : PopupMenuButton<String>(
+                                position: PopupMenuPosition.under,
+                                elevation: 8,
+                                shadowColor: const Color(0x22000000),
+                                color: Colors.white,
+                                surfaceTintColor: Colors.transparent,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  side: const BorderSide(
+                                    color: Color(0xFFE2E8F0),
+                                    width: 1,
+                                  ),
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 200,
+                                  maxWidth: 260,
+                                ),
+                                icon: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.more_vert_rounded,
+                                    size: 18,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                                onSelected: (v) async {
+                                  if (v == 'edit') {
+                                    editEmployee(e);
+                                  } else if (v == 'role') {
+                                    changeRole(e);
+                                  } else if (v == 'shift') {
+                                    assignShift(e);
+                                  } else if (v == 'toggle_lock') {
+                                    final copy = Employee.fromJson(e.toJson())
+                                      ..active = !e.active;
+                                    await perform(
+                                      () => c.saveEmployee(copy),
+                                      e.active
+                                          ? 'Đã khóa tài khoản'
+                                          : 'Đã mở khóa tài khoản',
+                                    );
+                                  } else if (v == 'delete') {
+                                    final ok = await confirm(
+                                      context,
+                                      'Xóa tài khoản ${e.name}? Tài khoản đã có lịch sử chỉ có thể khóa.',
+                                    );
+                                    if (ok && mounted) {
+                                      await perform(() => c.deleteEmployee(e.id));
+                                    }
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  const PopupMenuItem(
+                                    value: 'edit',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.edit_outlined, size: 18),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Sửa thông tin',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'role',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.admin_panel_settings_outlined,
+                                          size: 18,
+                                          color: Colors.deepPurple,
+                                        ),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Phân quyền vai trò',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'shift',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.access_time_rounded, size: 18),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Phân ca làm việc',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'toggle_lock',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          e.active
+                                              ? Icons.lock_outline_rounded
+                                              : Icons.lock_open_rounded,
+                                          size: 18,
+                                        ),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            e.active
+                                                ? 'Khóa tài khoản'
+                                                : 'Mở khóa tài khoản',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 18,
+                                          color: Colors.red,
+                                        ),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Xóa tài khoản',
+                                            style: TextStyle(color: Colors.red),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (!_staffExpanded &&
+                employees.length > 5 &&
+                search.isEmpty &&
+                roleFilter == 'all' &&
+                deptFilter == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _staffExpanded = true),
+                  icon: const Icon(Icons.expand_more_rounded),
+                  label: Text(
+                    'Xem toàn bộ ${employees.length} nhân sự (còn ${employees.length - 5} người)',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0F7C8A),
+                    side: const BorderSide(color: Color(0xFF0F7C8A)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              )
+            else if (_staffExpanded && employees.length > 5)
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _staffExpanded = false),
+                  icon: const Icon(Icons.expand_less_rounded),
+                  label: const Text('Thu gọn danh sách nhân sự'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF64748B),
+                  ),
                 ),
               ),
           ],
         ),
       ),
       Section(
+        icon: Icons.schedule_rounded,
+        iconColor: const Color(0xFF0284C7),
         title: 'Ca làm việc',
         subtitle: 'Chạm vào ca để xem danh sách nhân sự đang phân ca',
         action: c.isAdmin
@@ -1869,6 +2509,34 @@ class _HomePageState extends State<HomePage> {
                     trailing: !c.isAdmin
                         ? null
                         : PopupMenuButton<String>(
+                            position: PopupMenuPosition.under,
+                            elevation: 8,
+                            shadowColor: const Color(0x22000000),
+                            color: Colors.white,
+                            surfaceTintColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: const BorderSide(
+                                color: Color(0xFFE2E8F0),
+                                width: 1,
+                              ),
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 160,
+                              maxWidth: 220,
+                            ),
+                            icon: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.more_vert_rounded,
+                                size: 18,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
                             onSelected: (v) async {
                               if (v == 'edit') {
                                 editShift(s);
@@ -1929,10 +2597,34 @@ class _HomePageState extends State<HomePage> {
                               }
                             },
                             itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('Sửa')),
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit_outlined, size: 18),
+                                    SizedBox(width: 10),
+                                    Expanded(child: Text('Sửa ca')),
+                                  ],
+                                ),
+                              ),
                               PopupMenuItem(
                                 value: 'delete',
-                                child: Text('Xóa'),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 18,
+                                      color: Colors.red,
+                                    ),
+                                    SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Xóa ca',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -1941,6 +2633,8 @@ class _HomePageState extends State<HomePage> {
               ),
       ),
       Section(
+        icon: Icons.apartment_rounded,
+        iconColor: const Color(0xFF7C3AED),
         title: 'Phòng ban',
         subtitle: '${c.data.departments.length} phòng ban đang hoạt động',
         action: c.isAdmin
@@ -1973,6 +2667,34 @@ class _HomePageState extends State<HomePage> {
                     trailing: !c.isAdmin
                         ? null
                         : PopupMenuButton<String>(
+                            position: PopupMenuPosition.under,
+                            elevation: 8,
+                            shadowColor: const Color(0x22000000),
+                            color: Colors.white,
+                            surfaceTintColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: const BorderSide(
+                                color: Color(0xFFE2E8F0),
+                                width: 1,
+                              ),
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 160,
+                              maxWidth: 220,
+                            ),
+                            icon: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.more_vert_rounded,
+                                size: 18,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
                             onSelected: (v) async {
                               if (v == 'edit') {
                                 editDepartment(d);
@@ -1984,10 +2706,34 @@ class _HomePageState extends State<HomePage> {
                               }
                             },
                             itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('Sửa')),
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit_outlined, size: 18),
+                                    SizedBox(width: 10),
+                                    Expanded(child: Text('Sửa tên')),
+                                  ],
+                                ),
+                              ),
                               PopupMenuItem(
                                 value: 'delete',
-                                child: Text('Xóa'),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 18,
+                                      color: Colors.red,
+                                    ),
+                                    SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Xóa',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -2796,106 +3542,225 @@ class _HomePageState extends State<HomePage> {
                       ))),
         )
         .toList();
+
+    final totalHours = filtered.fold<double>(0, (s, a) => s + a.hours);
+    final totalLate = filtered.where((a) => a.lateMinutes > 0).length;
+
     return list([
       _pageHint(
-        'Kiểm tra bảng công',
-        'Tìm theo nhân viên hoặc chọn khoảng ngày. Chạm vào bản ghi để xem giờ vào, giờ ra và vị trí.',
-        Icons.fact_check_outlined,
+        'Bảng công & Điểm danh',
+        'Kiểm tra thời gian vào–ra và trạng thái làm việc. Chạm vào bất kỳ bản ghi nào để xem chi tiết GPS & bản đồ.',
+        Icons.calendar_month_rounded,
       ),
+
+      // Thanh tóm tắt số liệu bảng công
+      Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0B1F3A).withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    '${filtered.length}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F7C8A),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text('Lượt chấm', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                ],
+              ),
+            ),
+            Container(height: 28, width: 1, color: const Color(0xFFE2E8F0)),
+            Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    '${totalHours.toStringAsFixed(1)} h',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0284C7),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text('Tổng giờ', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                ],
+              ),
+            ),
+            Container(height: 28, width: 1, color: const Color(0xFFE2E8F0)),
+            Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    '$totalLate',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: totalLate > 0 ? const Color(0xFFEA580C) : const Color(0xFF059669),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text('Lần đi trễ', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+
       Section(
-        title: 'Bảng công',
-        subtitle:
-            '${filtered.length} bản ghi • Giờ công là thời gian vào–ra, chưa trừ giờ nghỉ',
+        icon: Icons.access_time_filled_rounded,
+        iconColor: const Color(0xFF0F7C8A),
+        title: 'Bảng chấm công chi tiết',
+        subtitle: '${filtered.length} bản ghi • Chạm vào dòng để xem bản đồ tọa độ',
+        action: OutlinedButton.icon(
+          onPressed: filtered.isEmpty
+              ? null
+              : () async {
+                  String cell(Object? value) {
+                    var s = '$value';
+                    if (RegExp(r'^[=+@\-\t\r]').hasMatch(s)) s = "'$s";
+                    return '"${s.replaceAll('"', '""')}"';
+                  }
+
+                  final rows = [
+                    [
+                      'Nhân viên',
+                      'Ca',
+                      'Giờ vào',
+                      'Giờ ra',
+                      'Trễ (phút)',
+                      'Số giờ',
+                    ],
+                    ...filtered.map(
+                      (a) => [
+                        employeeName(a.employeeId),
+                        a.shiftName,
+                        a.checkIn.toIso8601String(),
+                        a.checkOut?.toIso8601String() ?? '',
+                        a.lateMinutes,
+                        a.hours.toStringAsFixed(2),
+                      ],
+                    ),
+                  ];
+                  await Clipboard.setData(
+                    ClipboardData(
+                      text: rows
+                          .map((r) => r.map(cell).join(','))
+                          .join('\r\n'),
+                    ),
+                  );
+                  if (mounted) {
+                    message(
+                      context,
+                      'Đã sao chép CSV vào bộ nhớ tạm để dán vào Excel.',
+                    );
+                  }
+                },
+          icon: const Icon(Icons.download_rounded, size: 16),
+          label: const Text('Xuất CSV'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
         child: Column(
           children: [
             TextField(
               decoration: const InputDecoration(
-                hintText: 'Tìm nhân viên, ca hoặc ngày',
+                hintText: 'Tìm theo tên nhân viên, ca làm hoặc ngày...',
                 prefixIcon: Icon(Icons.search),
               ),
               onChanged: (v) => setState(() => search = v),
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.date_range),
-                  label: Text(
-                    historyRange == null
-                        ? 'Lọc ngày'
-                        : '${dateLabel(historyRange!.start)} – ${dateLabel(historyRange!.end)}',
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('Tất cả'),
+                    selected: historyRange == null,
+                    onSelected: (_) => setState(() => historyRange = null),
                   ),
-                  onPressed: () async {
-                    final range = await showDateRangePicker(
-                      context: context,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2100),
-                      initialDateRange: historyRange,
-                    );
-                    if (mounted && range != null) {
-                      setState(() => historyRange = range);
-                    }
-                  },
-                ),
-                if (historyRange != null)
-                  TextButton(
-                    onPressed: () => setState(() => historyRange = null),
-                    child: const Text('Bỏ lọc'),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Hôm nay'),
+                    selected: historyRange != null &&
+                        dayKey(historyRange!.start) == dayKey(DateTime.now()) &&
+                        dayKey(historyRange!.end) == dayKey(DateTime.now()),
+                    onSelected: (_) {
+                      final now = DateTime.now();
+                      final today = DateTime(now.year, now.month, now.day);
+                      setState(() => historyRange = DateTimeRange(start: today, end: today));
+                    },
                   ),
-                OutlinedButton.icon(
-                  onPressed: filtered.isEmpty
-                      ? null
-                      : () async {
-                          String cell(Object? value) {
-                            var s = '$value';
-                            if (RegExp(r'^[=+@\-\t\r]').hasMatch(s)) s = "'$s";
-                            return '"${s.replaceAll('"', '""')}"';
-                          }
-
-                          final rows = [
-                            [
-                              'Nhân viên',
-                              'Ca',
-                              'Giờ vào',
-                              'Giờ ra',
-                              'Trễ (phút)',
-                              'Số giờ',
-                            ],
-                            ...filtered.map(
-                              (a) => [
-                                employeeName(a.employeeId),
-                                a.shiftName,
-                                a.checkIn.toIso8601String(),
-                                a.checkOut?.toIso8601String() ?? '',
-                                a.lateMinutes,
-                                a.hours.toStringAsFixed(2),
-                              ],
-                            ),
-                          ];
-                          await Clipboard.setData(
-                            ClipboardData(
-                              text: rows
-                                  .map((r) => r.map(cell).join(','))
-                                  .join('\r\n'),
-                            ),
-                          );
-                          if (mounted) {
-                            message(
-                              context,
-                              'Đã sao chép CSV. Dán vào file .csv UTF-8 để mở bằng Excel.',
-                            );
-                          }
-                        },
-                  icon: const Icon(Icons.copy_outlined),
-                  label: const Text('Sao chép CSV'),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('7 ngày qua'),
+                    selected: historyRange != null &&
+                        DateTime.now().difference(historyRange!.start).inDays <= 7 &&
+                        historyRange!.start != historyRange!.end,
+                    onSelected: (_) {
+                      final now = DateTime.now();
+                      final today = DateTime(now.year, now.month, now.day);
+                      setState(() => historyRange = DateTimeRange(
+                            start: today.subtract(const Duration(days: 6)),
+                            end: today,
+                          ));
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.date_range_rounded, size: 16),
+                    label: Text(
+                      historyRange == null
+                          ? 'Chọn khoảng ngày'
+                          : '${dateLabel(historyRange!.start)} – ${dateLabel(historyRange!.end)}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () async {
+                      final range = await showDateRangePicker(
+                        context: context,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2100),
+                        initialDateRange: historyRange,
+                      );
+                      if (mounted && range != null) {
+                        setState(() => historyRange = range);
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
-            const Divider(height: 28),
+            const SizedBox(height: 16),
             if (filtered.isEmpty)
-              const EmptyState('Chưa có bản ghi trong khoảng đã chọn.'),
+              const EmptyState(
+                'Không tìm thấy bản ghi chấm công nào phù hợp.',
+                icon: Icons.calendar_today_outlined,
+              ),
             ...filtered.map(attendanceTile),
           ],
         ),
@@ -2915,105 +3780,286 @@ class _HomePageState extends State<HomePage> {
           ..sort((a, b) => b.from.compareTo(a.from));
     return list([
       _pageHint(
-        'Theo dõi đơn của bạn',
-        'Chỉ đơn đang chờ mới được sửa hoặc xóa. Người quản lý không được tự duyệt đơn của mình.',
-        Icons.assignment_outlined,
+        c.isStaff ? 'Quản lý duyệt đơn' : 'Theo dõi đơn của bạn',
+        c.isStaff
+            ? 'Theo dõi và xét duyệt các đơn xin nghỉ phép, giải trình quên chấm công của nhân viên.'
+            : 'Gửi đơn xin nghỉ phép hoặc giải trình chấm công. Chỉ đơn đang chờ duyệt mới có thể sửa hoặc xóa.',
+        Icons.assignment_turned_in_rounded,
       ),
       Section(
-        title: 'Đơn nghỉ & giải trình',
-        subtitle: 'Đơn đã xử lý được giữ nguyên để đối chiếu',
-        action: IconButton(
-          tooltip: 'Tạo đơn',
-          onPressed: () => editRequest(),
-          icon: const Icon(Icons.add),
-        ),
+        icon: Icons.fact_check_rounded,
+        iconColor: const Color(0xFFEA580C),
+        title: 'Danh sách đơn từ',
+        subtitle: '${items.length} đơn • Đơn đã xử lý được lưu trữ để đối chiếu',
+        action: c.isAdmin
+            ? null
+            : FilledButton.icon(
+                onPressed: () => editRequest(),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('Tạo đơn mới'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F7C8A),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
         child: Column(
           children: [
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final item in {
-                  'all': 'Tất cả',
-                  'pending': 'Chờ duyệt',
-                  'approved': 'Đã duyệt',
-                  'rejected': 'Từ chối',
-                }.entries)
-                  ChoiceChip(
-                    label: Text(item.value),
-                    selected: requestFilter == item.key,
-                    onSelected: (_) => setState(() => requestFilter = item.key),
-                  ),
-              ],
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final item in {
+                    'all': 'Tất cả (${c.data.requests.where((r) => c.isStaff || r.employeeId == c.user!.id).length})',
+                    'pending': 'Chờ duyệt (${c.data.requests.where((r) => r.status == 'pending' && (c.isStaff || r.employeeId == c.user!.id)).length})',
+                    'approved': 'Đã duyệt',
+                    'rejected': 'Từ chối',
+                  }.entries) ...[
+                    ChoiceChip(
+                      label: Text(
+                        item.value,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: requestFilter == item.key ? FontWeight.w700 : FontWeight.w600,
+                          color: requestFilter == item.key ? const Color(0xFF0F766E) : const Color(0xFF334155),
+                        ),
+                      ),
+                      selected: requestFilter == item.key,
+                      selectedColor: const Color(0xFFCCFBF1),
+                      backgroundColor: const Color(0xFFF1F5F9),
+                      onSelected: (_) => setState(() => requestFilter = item.key),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
             ),
             const SizedBox(height: 16),
-            if (items.isEmpty) const EmptyState('Chưa có đơn trong nhóm này.'),
-            for (final r in items)
-              Card(
-                color: const Color(0xFFF3F6FA),
+            if (items.isEmpty)
+              const EmptyState(
+                'Không có đơn từ nào trong mục này.',
+                icon: Icons.assignment_outlined,
+              ),
+            for (final r in items) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF0B1F3A).withValues(alpha: 0.02),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${r.type} • ${employeeName(r.employeeId)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundColor: const Color(0xFFE0F2FE),
+                            child: Text(
+                              employeeName(r.employeeId).isNotEmpty
+                                  ? employeeName(r.employeeId)[0].toUpperCase()
+                                  : 'U',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0284C7),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  employeeName(r.employeeId),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14.5,
+                                    color: Color(0xFF0B1F3A),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  r.type,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF0F7C8A),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: r.status == 'approved'
+                                  ? const Color(0xFFECFDF5)
+                                  : r.status == 'rejected'
+                                  ? const Color(0xFFFEF2F2)
+                                  : const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: r.status == 'approved'
+                                    ? const Color(0xFF6EE7B7)
+                                    : r.status == 'rejected'
+                                    ? const Color(0xFFFCA5A5)
+                                    : const Color(0xFFFDBA74),
+                                width: 0.8,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  r.status == 'approved'
+                                      ? Icons.check_circle_rounded
+                                      : r.status == 'rejected'
+                                      ? Icons.cancel_rounded
+                                      : Icons.timelapse_rounded,
+                                  size: 13,
+                                  color: r.status == 'approved'
+                                      ? const Color(0xFF059669)
+                                      : r.status == 'rejected'
+                                      ? const Color(0xFFDC2626)
+                                      : const Color(0xFFEA580C),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  {
+                                    'pending': 'Chờ duyệt',
+                                    'approved': 'Đã duyệt',
+                                    'rejected': 'Từ chối',
+                                  }[r.status]!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: r.status == 'approved'
+                                        ? const Color(0xFF059669)
+                                        : r.status == 'rejected'
+                                        ? const Color(0xFFDC2626)
+                                        : const Color(0xFFEA580C),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                      Text('${dateLabel(r.from)} → ${dateLabel(r.to)}'),
-                      Text(r.reason),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          const Icon(Icons.date_range_rounded, size: 15, color: Color(0xFF64748B)),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${dateLabel(r.from)} → ${dateLabel(r.to)}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF334155),
+                            ),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 8),
-                      Text(
-                        {
-                          'pending': 'Chờ duyệt',
-                          'approved': 'Đã duyệt',
-                          'rejected': 'Từ chối',
-                        }[r.status]!,
-                        style: TextStyle(
-                          color: r.status == 'approved'
-                              ? Colors.teal
-                              : r.status == 'rejected'
-                              ? Colors.red.shade700
-                              : Colors.brown,
-                          fontWeight: FontWeight.w700,
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Text(
+                          r.reason.isEmpty ? 'Không có lý do chi tiết' : r.reason,
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF475569), height: 1.35),
                         ),
                       ),
-                      if (r.reviewerNote.isNotEmpty)
-                        Text('Phản hồi: ${r.reviewerNote}'),
-                      if (r.status == 'pending')
-                        Wrap(
-                          spacing: 8,
+                      if (r.reviewerNote.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFFDE68A)),
+                          ),
+                          child: Text(
+                            'Phản hồi quản lý: ${r.reviewerNote}',
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+                          ),
+                        ),
+                      ],
+                      if (r.status == 'pending') ...[
+                        const SizedBox(height: 12),
+                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             if (r.employeeId == c.user!.id) ...[
-                              TextButton(
+                              OutlinedButton.icon(
                                 onPressed: () => editRequest(r),
-                                child: const Text('Sửa'),
+                                icon: const Icon(Icons.edit_outlined, size: 15),
+                                label: const Text('Sửa'),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
                               ),
-                              TextButton(
+                              const SizedBox(width: 8),
+                              TextButton.icon(
                                 onPressed: () async {
-                                  if (await confirm(context, 'Xóa đơn này?')) {
+                                  if (await confirm(context, 'Xác nhận xóa đơn này?')) {
                                     await perform(() => c.deleteRequest(r.id));
                                   }
                                 },
-                                child: const Text('Xóa'),
+                                icon: const Icon(Icons.delete_outline, size: 15, color: Colors.red),
+                                label: const Text('Xóa', style: TextStyle(color: Colors.red)),
                               ),
                             ],
                             if (c.isStaff && r.employeeId != c.user!.id) ...[
-                              TextButton(
-                                onPressed: () => review(r, true),
-                                child: const Text('Duyệt'),
-                              ),
-                              TextButton(
+                              OutlinedButton.icon(
                                 onPressed: () => review(r, false),
-                                child: const Text('Từ chối'),
+                                icon: const Icon(Icons.close_rounded, size: 15, color: Color(0xFFDC2626)),
+                                label: const Text('Từ chối', style: TextStyle(color: Color(0xFFDC2626))),
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFFFCA5A5)),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton.icon(
+                                onPressed: () => review(r, true),
+                                icon: const Icon(Icons.check_rounded, size: 15),
+                                label: const Text('Phê duyệt'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0F7C8A),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
                               ),
                             ],
                           ],
                         ),
+                      ],
                     ],
                   ),
                 ),
               ),
+            ],
           ],
         ),
       ),
@@ -3106,11 +4152,6 @@ class _HomePageState extends State<HomePage> {
         : 'Nhân viên (Employee)';
 
     return list([
-      _pageHint(
-        'Tài khoản & bảo mật',
-        'Kiểm tra email nhận OTP và quản lý đăng nhập sinh trắc học trên thiết bị này.',
-        Icons.shield_outlined,
-      ),
       // Profile Header Card Hiện Đại
       Container(
         padding: const EdgeInsets.all(22),
@@ -3287,9 +4328,11 @@ class _HomePageState extends State<HomePage> {
 
       const SizedBox(height: 14),
 
-      // Card Vị trí GPS hiện tại — cải tiến hiển thị địa chỉ chi tiết
+      // Card Vị trí GPS hiện tại
       Section(
-        title: '📍 Vị trí hiện tại',
+        icon: Icons.my_location_rounded,
+        iconColor: const Color(0xFF087F8C),
+        title: 'Vị trí hiện tại',
         subtitle: 'Xác định vị trí GPS chính xác — hiển thị địa chỉ thực tế.',
         child: Column(
           children: [
@@ -3317,36 +4360,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
 
-      const SizedBox(height: 14),
-
-      // Thông tin phiên bản & hệ thống
-      Section(
-        title: 'Hệ thống & Phiên bản',
-        subtitle: 'Nhóm 09 • Tống Nhật Bảo An',
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '• Backend: ASP.NET Core 10 (Render Cloud + Neon PostgreSQL)\n• Xác thực: Mật khẩu + OTP Brevo HTTPS API + Biometric Secure Storage\n• Chấm công: GPS Geofencing + QR Code động mã hóa\n• Thống kê: Báo cáo AI Insights + Biểu đồ fl_chart',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.6,
-                  color: Color(0xFF475569),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-
-      const SizedBox(height: 20),
+      const SizedBox(height: 16),
 
       // NÚT ĐĂNG XUẤT ĐẶT DƯỚI CÙNG TÁCH BIỆT RÕ RÀNG
       Container(
@@ -3395,7 +4409,15 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
-      const SizedBox(height: 30),
+      const SizedBox(height: 20),
+      const Center(
+        child: Text(
+          'Chấm Công Thông Minh • Phiên bản 1.0.0\nNhóm 09 — Tống Nhật Bảo An',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), height: 1.5),
+        ),
+      ),
+      const SizedBox(height: 16),
     ]);
   }
 

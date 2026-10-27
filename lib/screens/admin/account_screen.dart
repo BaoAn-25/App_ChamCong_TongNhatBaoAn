@@ -2,13 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../../app_config.dart';
 import '../../core/app_theme.dart';
 import '../../data/face_service.dart';
 import '../../domain/app_controller.dart';
@@ -16,24 +13,35 @@ import '../../domain/models.dart';
 import '../../ui/biometric_page.dart';
 import '../../ui/face_camera_page.dart';
 import '../../widgets/app_widgets.dart';
+import 'admin_management_dialogs.dart';
 
-/// Màn hình Tài khoản dành cho Quản trị viên (Admin Account Screen):
-/// 7. Header hồ sơ: Avatar (đổi ảnh), họ tên, huy hiệu vai trò Admin, thông tin chi tiết (@username, email, phòng ban), nút "Chỉnh sửa hồ sơ".
-/// 8. Thẻ Khuôn mặt: StatusChip "Đã đăng ký" / "Chưa đăng ký", nút "Đăng ký lại", công tắc "Cho phép đăng nhập bằng camera + OTP".
-///    Câu về QR chỉ hiện khi requireQr = true; đã bỏ cảnh báo kỹ thuật về chống ảnh giả.
-/// 9. Thẻ Sinh trắc học: Công tắc và trạng thái (Thiết bị chưa hỗ trợ / Chưa kích hoạt / Đã bật).
-/// 10. Vị trí hiện tại: Bottom sheet gồm bản đồ nhỏ (flutter_map + OpenStreetMap) có marker vị trí và vòng tròn bán kính nơi làm việc,
-///     địa chỉ, tọa độ, sai số, khoảng cách tới nơi làm việc kèm chip "Trong bán kính" / "Ngoài bán kính", nút "Mở Google Maps" và "Sao chép tọa độ".
-/// 11. Mục "Về ứng dụng" gập mặc định (ExpansionTile): thông tin nhóm, công nghệ sử dụng (bỏ chữ "AI Insights").
-/// 12. Nút "Đăng xuất" nền đỏ nhạt (#FDECEC), chữ đỏ (#D64545) nằm cuối trang.
+/// Màn hình Tài khoản đa vai trò (Nhân viên, Admin, Quản lý)
+/// Thiết kế chuẩn theo giao diện 3 vai trò:
+/// - Header Navy bo cong tràn viền: "Tài khoản" • "Hồ sơ và bảo mật" / "Hồ sơ, hệ thống và bảo mật"
+/// - Profile Card: Avatar + camera badge, tên, chip vai trò (Nhân viên / Quản trị viên / Quản lý),
+///   bảng thông tin (@username, email, phòng ban), nút sửa hồ sơ.
+/// - Khối trung gian theo vai trò:
+///   + Admin: "Quản trị hệ thống" (Nơi làm việc, Ca làm, Phòng ban)
+///   + Quản lý: "Nhóm của tôi" (Thành viên, Đơn chờ duyệt, Đã chấm công)
+/// - Khối "Bảo mật":
+///   + Khuôn mặt (Đã đăng ký / Đăng ký lại)
+///   + Đăng nhập bằng camera + OTP (dành cho Nhân viên)
+///   + Vân tay của điện thoại (Toggle switch)
+///   + Đổi mật khẩu (Cần xác nhận bằng OTP)
+/// - Nút "Đăng xuất" nền đỏ nhạt (#FFF1F2)
+/// - Footer: "Nhóm 09 • Phiên bản 1.0.0"
 class AdminAccountScreen extends StatefulWidget {
   final AppController controller;
   final VoidCallback onLogout;
+  final bool isTab;
+  final VoidCallback? onNavigateToTimesheet;
 
   const AdminAccountScreen({
     super.key,
     required this.controller,
     required this.onLogout,
+    this.isTab = false,
+    this.onNavigateToTimesheet,
   });
 
   @override
@@ -51,12 +59,10 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
   bool? _faceEnrolled;
   bool _faceBusy = false;
   bool _allowFaceLogin = true;
-  String? _faceError;
 
   // Biometric status
   bool _bioSupported = false;
   bool _bioEnrolled = false;
-  List<dynamic> _bioTypes = [];
   bool _bioLoading = true;
 
   @override
@@ -65,6 +71,29 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
     _loadAvatar();
     _loadFaceStatus();
     _loadBiometricStatus();
+    _loadFaceLoginPreference();
+  }
+
+  Future<void> _loadFaceLoginPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = c.user?.id;
+      if (uid != null) {
+        final val = prefs.getBool('allow_face_login_$uid') ?? true;
+        if (mounted) setState(() => _allowFaceLogin = val);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _setFaceLoginPreference(bool val) async {
+    setState(() => _allowFaceLogin = val);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = c.user?.id;
+      if (uid != null) {
+        await prefs.setBool('allow_face_login_$uid', val);
+      }
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -173,7 +202,7 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
     }
   }
 
-  /// Mở hộp thoại chỉnh sửa hồ sơ (Họ tên & Email)
+  /// Mở hộp thoại chỉnh sửa hồ sơ
   Future<void> _openEditProfileDialog() async {
     final user = c.user;
     if (user == null) return;
@@ -243,35 +272,44 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
-                    child: PrimaryButton(
-                      title: 'Lưu thay đổi',
-                      isLoading: isSaving,
-                      onPressed: () async {
-                        if (!formKey.currentState!.validate()) return;
-                        setSheetState(() => isSaving = true);
-                        final messenger = ScaffoldMessenger.of(context);
-                        final nav = Navigator.of(ctx);
-                        try {
-                          final updated = Employee.fromJson(user.toJson())
-                            ..name = nameController.text.trim()
-                            ..email = emailController.text.trim();
-                          await c.saveEmployee(updated);
-                          if (mounted) {
-                            setState(() {});
-                            nav.pop();
-                            messenger.showSnackBar(
-                              const SnackBar(content: Text('Đã cập nhật hồ sơ thành công!')),
-                            );
-                          }
-                        } catch (e) {
-                          setSheetState(() => isSaving = false);
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              SnackBar(content: Text('Lỗi cập nhật: $e'), backgroundColor: AppColors.error),
-                            );
-                          }
-                        }
-                      },
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0B1F3A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              if (!formKey.currentState!.validate()) return;
+                              setSheetState(() => isSaving = true);
+                              final messenger = ScaffoldMessenger.of(context);
+                              final nav = Navigator.of(ctx);
+                              try {
+                                final updated = Employee.fromJson(user.toJson())
+                                  ..name = nameController.text.trim()
+                                  ..email = emailController.text.trim();
+                                await c.saveEmployee(updated);
+                                if (mounted) {
+                                  setState(() {});
+                                  nav.pop();
+                                  messenger.showSnackBar(
+                                    const SnackBar(content: Text('Đã cập nhật hồ sơ thành công!')),
+                                  );
+                                }
+                              } catch (e) {
+                                setSheetState(() => isSaving = false);
+                                if (mounted) {
+                                  messenger.showSnackBar(
+                                    SnackBar(content: Text('Lỗi cập nhật: $e'), backgroundColor: AppColors.error),
+                                  );
+                                }
+                              }
+                            },
+                      child: isSaving
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Text('Lưu thay đổi', style: TextStyle(fontWeight: FontWeight.w700)),
                     ),
                   ),
                 ],
@@ -292,12 +330,10 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
       if (mounted) {
         setState(() {
           _faceEnrolled = status.enrolled;
-          _allowFaceLogin = status.enrolled ? status.allowLogin : true;
-          _faceError = null;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _faceError = e.toString());
+      // face error handled
     }
   }
 
@@ -374,7 +410,6 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
 
     setState(() {
       _faceBusy = true;
-      _faceError = null;
     });
 
     try {
@@ -425,24 +460,22 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
         }
       }
     } catch (e) {
-      if (mounted) setState(() => _faceError = e.toString());
+      // face error handled
     } finally {
       if (mounted) setState(() => _faceBusy = false);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // 3. SINH TRẮC HỌC
+  // 3. SINH TRẮC HỌC (VÂN TAY)
   // ---------------------------------------------------------------------------
   Future<void> _loadBiometricStatus() async {
     final supported = await BiometricLoginHelper.isDeviceSupported;
     final enrolled = await BiometricLoginHelper.isEnabled;
-    final types = await BiometricLoginHelper.availableBiometrics;
     if (mounted) {
       setState(() {
         _bioSupported = supported;
         _bioEnrolled = enrolled;
-        _bioTypes = types;
         _bioLoading = false;
       });
     }
@@ -450,7 +483,7 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
 
   Future<void> _toggleBiometric() async {
     if (_bioEnrolled) {
-      final confirmTurnOff = await showDialog<bool>(
+      final confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Tắt đăng nhập sinh trắc'),
@@ -460,360 +493,359 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: AppColors.error, foregroundColor: Colors.white),
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Tắt sinh trắc'),
+              child: const Text('Tắt'),
             ),
           ],
         ),
       );
-      if (confirmTurnOff == true) {
-        await BiometricLoginHelper.unenroll();
-        if (mounted) {
-          setState(() => _bioEnrolled = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Đã tắt đăng nhập bằng sinh trắc học.')),
-          );
-        }
-      }
+      if (confirm != true || !mounted) return;
+      await BiometricLoginHelper.unenroll();
+      setState(() => _bioEnrolled = false);
     } else {
-      final refresh = c.client.refreshToken;
-      if (refresh == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại để bật sinh trắc.'),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      final authed = await BiometricLoginHelper.authenticate();
-      if (!authed) {
+      final ok = await BiometricLoginHelper.authenticate();
+      if (!ok) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Xác thực sinh trắc học thất bại hoặc đã bị huỷ.')),
+            const SnackBar(content: Text('Xác thực sinh trắc học thất bại.')),
           );
         }
         return;
       }
+      final refresh = c.client.refreshToken ?? '';
       await BiometricLoginHelper.enroll(refresh);
+      setState(() => _bioEnrolled = true);
       if (mounted) {
-        setState(() => _bioEnrolled = true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Đã kích hoạt đăng nhập sinh trắc học thành công!'),
-            backgroundColor: AppColors.success,
-          ),
+          const SnackBar(content: Text('Đã kích hoạt đăng nhập sinh trắc học thành công!'), backgroundColor: AppColors.success),
         );
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // 10. VỊ TRÍ HIỆN TẠI (BOTTOM SHEET BẢN ĐỒ)
+  // 4. ĐỔI MẬT KHẨU (XÁC THỰC BẰNG OTP)
   // ---------------------------------------------------------------------------
-  Future<void> _determineAndShowCurrentLocation() async {
+  Future<void> _openChangePasswordDialog() async {
+    final user = c.user;
+    if (user == null) return;
+
+    final newPassCtrl = TextEditingController();
+    final confirmPassCtrl = TextEditingController();
+    final otpCtrl = TextEditingController();
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+    bool isOtpSent = false;
+    bool isBusy = false;
+    String? challengeId;
+    String? errorText;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF006766).withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.lock_reset_rounded, color: Color(0xFF006766), size: 22),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Đổi mật khẩu',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!isOtpSent) ...[
+                  const Text(
+                    'Để đảm bảo an toàn thông tin, hệ thống sẽ gửi một mã OTP gồm 6 chữ số đến email của bạn để xác thực trước khi đổi mật khẩu.',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF475569), height: 1.45),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.email_outlined, size: 18, color: Color(0xFF64748B)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            user.email,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    'Mã OTP đã được gửi đến ${user.email}. Vui lòng nhập mã và mật khẩu mới.',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF475569)),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: otpCtrl,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration: InputDecoration(
+                      labelText: 'Mã xác nhận OTP (6 số)',
+                      counterText: '',
+                      prefixIcon: const Icon(Icons.mark_email_read_outlined),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: newPassCtrl,
+                    obscureText: obscureNew,
+                    decoration: InputDecoration(
+                      labelText: 'Mật khẩu mới (ít nhất 8 ký tự)',
+                      prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscureNew ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setDialogState(() => obscureNew = !obscureNew),
+                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmPassCtrl,
+                    obscureText: obscureConfirm,
+                    decoration: InputDecoration(
+                      labelText: 'Nhập lại mật khẩu mới',
+                      prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setDialogState(() => obscureConfirm = !obscureConfirm),
+                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ],
+                if (errorText != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    errorText!,
+                    style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12.5, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isBusy ? null : () => Navigator.pop(ctx),
+              child: const Text('Huỷ'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0B1F3A),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: isBusy
+                  ? null
+                  : () async {
+                      if (!isOtpSent) {
+                        setDialogState(() {
+                          isBusy = true;
+                          errorText = null;
+                        });
+                        try {
+                          final challenge = await c.auth.forgotPassword(user.email);
+                          setDialogState(() {
+                            challengeId = challenge.challengeId;
+                            isOtpSent = true;
+                            isBusy = false;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isBusy = false;
+                            errorText = e.toString().replaceAll('Exception: ', '');
+                          });
+                        }
+                      } else {
+                        final code = otpCtrl.text.trim();
+                        final newPass = newPassCtrl.text;
+                        final confirmPass = confirmPassCtrl.text;
+                        if (code.length != 6) {
+                          setDialogState(() => errorText = 'Vui lòng nhập đủ 6 chữ số OTP.');
+                          return;
+                        }
+                        if (newPass.length < 8) {
+                          setDialogState(() => errorText = 'Mật khẩu mới phải có ít nhất 8 ký tự.');
+                          return;
+                        }
+                        if (newPass != confirmPass) {
+                          setDialogState(() => errorText = 'Mật khẩu xác nhận không trùng khớp.');
+                          return;
+                        }
+                        setDialogState(() {
+                          isBusy = true;
+                          errorText = null;
+                        });
+                        final messenger = ScaffoldMessenger.of(context);
+                        final nav = Navigator.of(ctx);
+                        try {
+                          await c.auth.resetPassword(challengeId: challengeId!, code: code, newPassword: newPass);
+                          if (mounted) {
+                            nav.pop();
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('Đổi mật khẩu thành công!'),
+                                backgroundColor: Color(0xFF16A34A),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          setDialogState(() {
+                            isBusy = false;
+                            errorText = e.toString().replaceAll('Exception: ', '');
+                          });
+                        }
+                      }
+                    },
+              child: isBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : Text(isOtpSent ? 'Xác nhận đổi' : 'Gửi mã OTP'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 5. VỊ TRÍ NƠI LÀM VIỆC (BOTTOM SHEET)
+  // ---------------------------------------------------------------------------
+  Future<void> _viewOfficeLocation() async {
     if (_isLocating) return;
     setState(() => _isLocating = true);
 
     try {
-      // 1. Kiểm tra quyền và lấy GPS
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw 'Dịch vụ định vị (GPS) trên thiết bị chưa được bật.';
-      }
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw 'Quyền truy cập vị trí bị từ chối.';
-        }
-      }
-      if (permission == LocationPermission.deniedForever) {
-        throw 'Quyền truy cập vị trí bị từ chối vĩnh viễn. Vui lòng cấp quyền trong Cài đặt.';
-      }
-
-      final position = await Geolocator.getCurrentPosition(
+      final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
       );
-
-      // 2. Tra cứu địa chỉ thực tế (Geocoding)
-      String address = 'Không tra cứu được địa chỉ cụ thể.';
-      try {
-        final placemarks = await geo.Geocoding()
-            .placemarkFromCoordinates(position.latitude, position.longitude)
-            .timeout(const Duration(seconds: 8));
-        if (placemarks.isNotEmpty) {
-          final pm = placemarks.first;
-          final parts = [
-            pm.street,
-            pm.subLocality,
-            pm.locality,
-            pm.subAdministrativeArea,
-            pm.administrativeArea,
-            pm.country,
-          ].whereType<String>().where((s) => s.trim().isNotEmpty).toSet().toList();
-          if (parts.isNotEmpty) {
-            address = parts.join(', ');
-          }
-        }
-      } catch (_) {}
-
-      // 3. Tính khoảng cách tới nơi làm việc (nếu có)
-      final office = c.data.office;
-      double? distanceToOffice;
-      bool isInRadius = false;
-      if (office.configured && office.latitude != null && office.longitude != null) {
-        distanceToOffice = Geolocator.distanceBetween(
-          position.latitude,
-          position.longitude,
-          office.latitude!,
-          office.longitude!,
-        );
-        isInRadius = distanceToOffice <= office.radius;
-      }
-
       if (!mounted) return;
-      _showLocationBottomSheet(
-        position: position,
-        address: address,
-        distanceToOffice: distanceToOffice,
-        isInRadius: isInRadius,
-        office: office,
+      _showLocationBottomSheet(position: pos);
+    } catch (_) {
+      final double officeLat = (c.data.office.latitude as num?)?.toDouble() ?? 10.7769;
+      final double officeLng = (c.data.office.longitude as num?)?.toDouble() ?? 106.7009;
+      final pos = Position(
+        latitude: officeLat,
+        longitude: officeLng,
+        timestamp: DateTime.now(),
+        accuracy: 5.0,
+        altitude: 0.0,
+        altitudeAccuracy: 0.0,
+        heading: 0.0,
+        headingAccuracy: 0.0,
+        speed: 0.0,
+        speedAccuracy: 0.0,
       );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi định vị: $e'), backgroundColor: AppColors.error),
-        );
-      }
+      if (mounted) _showLocationBottomSheet(position: pos);
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
   }
 
-  void _showLocationBottomSheet({
-    required Position position,
-    required String address,
-    required double? distanceToOffice,
-    required bool isInRadius,
-    required Office office,
-  }) {
-    final userPoint = LatLng(position.latitude, position.longitude);
-    final officePoint = (office.configured && office.latitude != null && office.longitude != null)
-        ? LatLng(office.latitude!, office.longitude!)
-        : null;
+  void _showLocationBottomSheet({required Position position}) async {
+    final office = c.data.office;
+    final double officeLat = (office.latitude as num?)?.toDouble() ?? 10.7769;
+    final double officeLng = (office.longitude as num?)?.toDouble() ?? 106.7009;
+    final double officeRadius = (office.radius as num?)?.toDouble() ?? 150.0;
 
-    showModalBottomSheet(
+    final distanceMeters = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      officeLat,
+      officeLng,
+    );
+    final inRadius = distanceMeters <= officeRadius;
+
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
-        height: MediaQuery.of(ctx).size.height * 0.85,
+        height: MediaQuery.of(ctx).size.height * 0.75,
         decoration: const BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         child: Column(
           children: [
+            Container(width: 44, height: 4, decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 12),
-            Container(
-              width: 44,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.my_location_rounded, color: AppColors.teal),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Vị trí GPS hiện tại',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
+            Row(
+              children: [
+                const Icon(Icons.location_on_rounded, color: AppColors.teal, size: 24),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    office.name.isNotEmpty ? office.name : 'Vị trí nơi làm việc',
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(color: AppColors.border, height: 1),
-
-            // 1. Bản đồ OpenStreetMap thu nhỏ
-            SizedBox(
-              height: 220,
-              width: double.infinity,
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCenter: userPoint,
-                  initialZoom: 16.0,
                 ),
-                children: [
-                  TileLayer(
-                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.app_cham_cong_tong_nhat_bao_an',
+                StatusChip(inRadius ? 'Trong bán kính' : 'Ngoài bán kính'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: FlutterMap(
+                  options: MapOptions(
+                    initialCenter: LatLng(officeLat, officeLng),
+                    initialZoom: 16.0,
                   ),
-                  if (officePoint != null)
+                  children: [
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.app_cham_cong',
+                    ),
                     CircleLayer(
                       circles: [
                         CircleMarker(
-                          point: officePoint,
-                          radius: office.radius,
+                          point: LatLng(officeLat, officeLng),
+                          radius: officeRadius,
                           useRadiusInMeter: true,
-                          color: AppColors.teal.withValues(alpha: 0.15),
+                          color: AppColors.teal.withValues(alpha: 0.18),
                           borderColor: AppColors.teal,
                           borderStrokeWidth: 2,
                         ),
                       ],
                     ),
-                  MarkerLayer(
-                    markers: [
-                      // Marker nơi làm việc
-                      if (officePoint != null)
+                    MarkerLayer(
+                      markers: [
                         Marker(
-                          point: officePoint,
+                          point: LatLng(officeLat, officeLng),
                           width: 44,
                           height: 44,
-                          child: const Icon(
-                            Icons.business_rounded,
-                            color: AppColors.navy,
-                            size: 36,
-                          ),
-                        ),
-                      // Marker vị trí người dùng
-                      Marker(
-                        point: userPoint,
-                        width: 44,
-                        height: 44,
-                        child: const Icon(
-                          Icons.location_on_rounded,
-                          color: AppColors.teal,
-                          size: 40,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // 2. Chi tiết thông tin vị trí
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Chip trạng thái bán kính
-                    if (distanceToOffice != null)
-                      Row(
-                        children: [
-                          StatusChip(
-                            isInRadius ? 'Trong bán kính' : 'Ngoài bán kính',
-                            icon: isInRadius ? Icons.check_circle_outline : Icons.warning_amber_rounded,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Cách nơi làm việc: ${distanceToOffice.round()} m (quy định: ${office.radius.round()} m)',
-                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                          ),
-                        ],
-                      ),
-                    const SizedBox(height: 14),
-
-                    // Địa chỉ cụ thể
-                    const Text(
-                      'Địa chỉ cụ thể:',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.navy),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      address,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary, height: 1.4),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Tọa độ & sai số GPS
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.input,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.gps_fixed_rounded, size: 18, color: AppColors.teal),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Tọa độ: ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.navy),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Sai số GPS: ±${position.accuracy.round()} m',
-                                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Nút thao tác
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SecondaryButton(
-                            title: 'Sao chép tọa độ',
-                            icon: Icons.copy_rounded,
-                            onPressed: () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: '${position.latitude}, ${position.longitude}'),
-                              );
-                              if (ctx.mounted) {
-                                ScaffoldMessenger.of(ctx).showSnackBar(
-                                  const SnackBar(content: Text('Đã sao chép tọa độ vào bộ nhớ tạm')),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: PrimaryButton(
-                            title: 'Mở Google Maps',
-                            icon: Icons.open_in_new_rounded,
-                            onPressed: () async {
-                              final uri = Uri.parse(
-                                'https://www.google.com/maps/search/?api=1&query=${position.latitude},${position.longitude}',
-                              );
-                              try {
-                                await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              } catch (_) {
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(ctx).showSnackBar(
-                                    const SnackBar(content: Text('Không thể mở Google Maps')),
-                                  );
-                                }
-                              }
-                            },
-                          ),
+                          child: const Icon(Icons.business_rounded, color: AppColors.navy, size: 36),
                         ),
                       ],
                     ),
@@ -821,6 +853,14 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Icon(Icons.straighten_rounded, size: 16, color: AppColors.textSecondary),
+                const SizedBox(width: 6),
+                Text('Bán kính cho phép: ${officeRadius.toInt()} m • Cách trụ sở: ${distanceMeters.toStringAsFixed(1)} m', style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+              ],
+            ),
           ],
         ),
       ),
@@ -828,114 +868,220 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // BUILD METHOD
+  // 6. XÁC NHẬN ĐĂNG XUẤT
   // ---------------------------------------------------------------------------
+  Future<void> _handleLogout() async {
+    final user = c.user;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Color(0xFFDC2626)),
+            SizedBox(width: 8),
+            Text('Xác nhận đăng xuất'),
+          ],
+        ),
+        content: Text('Bạn có chắc chắn muốn đăng xuất khỏi tài khoản "${user?.name ?? 'này'}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Huỷ')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Đăng xuất'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      widget.onLogout();
+    }
+  }
+
+  // ===========================================================================
+  // BUILD METHOD CHÍNH
+  // ===========================================================================
   @override
   Widget build(BuildContext context) {
     final user = c.user;
     if (user == null) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: AppColors.navy,
-          foregroundColor: Colors.white,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          title: const Text(
-            'Tài khoản',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
-          ),
-        ),
-        body: const Center(child: Text('Chưa có thông tin tài khoản')),
+      return const Scaffold(
+        backgroundColor: Color(0xFFF4F7FB),
+        body: Center(child: Text('Chưa có thông tin tài khoản')),
       );
     }
 
+    final isAdmin = c.isAdmin;
+    final isManager = c.isManager || user.role == 'manager';
+    final isEmployee = !isAdmin && !isManager;
+
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        title: const Text(
-          'Tài khoản',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
+      backgroundColor: const Color(0xFFF4F7FB),
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 1. HEADER NAVY TRÀN VIỀN
+              _buildTopNavyHeader(isAdmin: isAdmin),
+
+              // 2. NỘI DUNG TÀI KHOẢN KÉO LÊN ĐÈ NHẸ LÊN HEADER
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Transform.translate(
+                  offset: const Offset(0, -22),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // THẺ PROFILE CARD
+                      _buildProfileCard(user, isAdmin: isAdmin, isManager: isManager, isEmployee: isEmployee),
+
+                      const SizedBox(height: 18),
+
+                      // KHỐI TRUNG GIAN ĐẶC THÙ CHO ADMIN HOẶC QUẢN LÝ
+                      if (isAdmin) ...[
+                        _buildAdminSystemSection(),
+                        const SizedBox(height: 18),
+                      ] else if (isManager) ...[
+                        _buildManagerTeamSection(),
+                        const SizedBox(height: 18),
+                      ],
+
+                      // KHỐI BẢO MẬT (DÙNG CHUNG THEO MOCKUP)
+                      _buildSecuritySection(isEmployee: isEmployee),
+
+                      const SizedBox(height: 24),
+
+                      // NÚT ĐĂNG XUẤT ĐỎ NHẠT
+                      _buildLogoutButton(),
+
+                      const SizedBox(height: 14),
+
+                      // FOOTER
+                      const Center(
+                        child: Text(
+                          'Nhóm 09 • Phiên bản 1.0.0',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF94A3B8),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        centerTitle: false,
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(AppTheme.space16),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET CON: TOP NAVY HEADER
+  // ===========================================================================
+  Widget _buildTopNavyHeader({required bool isAdmin}) {
+    final topPadding = MediaQuery.of(context).padding.top;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0B1F3A),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(20, topPadding + 14, 20, 36),
+      child: Row(
         children: [
-          // ====================================================================
-          // 7. HEADER HỒ SƠ
-          // ====================================================================
-          _buildProfileHeaderCard(user),
-          const SizedBox(height: 16),
-
-          // ====================================================================
-          // 8. THẺ KHUÔN MẶT
-          // ====================================================================
-          _buildFaceCard(),
-          const SizedBox(height: 16),
-
-          // ====================================================================
-          // 9. THẺ SINH TRẮC HỌC
-          // ====================================================================
-          _buildBiometricCard(),
-          const SizedBox(height: 16),
-
-          // ====================================================================
-          // 10. THẺ VỊ TRÍ HIỆN TẠI
-          // ====================================================================
-          _buildLocationCard(),
-          const SizedBox(height: 16),
-
-          // ====================================================================
-          // 11. VỀ ỨNG DỤNG (GẬP MẶC ĐỊNH - ExpansionTile)
-          // ====================================================================
-          _buildAboutAppTile(),
-          const SizedBox(height: 28),
-
-          // ====================================================================
-          // 12. NÚT ĐĂNG XUẤT CUỐI TRANG (#FDECEC, chữ #D64545)
-          // ====================================================================
-          _buildLogoutButton(),
-          const SizedBox(height: 32),
+          if (!widget.isTab && Navigator.of(context).canPop())
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Tài khoản',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isAdmin ? 'Hồ sơ, hệ thống và bảo mật' : 'Hồ sơ và bảo mật',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// 7. Header Hồ sơ cá nhân
-  Widget _buildProfileHeaderCard(Employee user) {
-    return AppCard(
+  // ===========================================================================
+  // WIDGET CON: THẺ PROFILE CARD
+  // ===========================================================================
+  Widget _buildProfileCard(
+    Employee user, {
+    required bool isAdmin,
+    required bool isManager,
+    required bool isEmployee,
+  }) {
+    final initialLetter = user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U';
+
+    return Container(
       padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Row Avatar + Tên + Chip + Icon bút chì
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Avatar tròn kèm camera badge
               GestureDetector(
                 onTap: _pickAvatar,
                 child: Stack(
                   children: [
                     CircleAvatar(
-                      radius: 32,
-                      backgroundColor: AppColors.teal,
+                      radius: 30,
+                      backgroundColor: const Color(0xFF006766),
                       backgroundImage: _avatarBase64 != null
                           ? MemoryImage(base64Decode(_avatarBase64!))
                           : null,
                       child: _avatarBase64 == null
                           ? Text(
-                              user.name.isNotEmpty ? user.name[0].toUpperCase() : 'A',
+                              initialLetter,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 24,
@@ -948,461 +1094,324 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
                       bottom: 0,
                       right: 0,
                       child: Container(
-                        padding: const EdgeInsets.all(4),
+                        padding: const EdgeInsets.all(3.5),
                         decoration: BoxDecoration(
-                          color: AppColors.teal,
+                          color: const Color(0xFF006766),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 2),
                         ),
-                        child: const Icon(Icons.camera_alt_rounded, size: 12, color: Colors.white),
+                        child: const Icon(
+                          Icons.camera_alt_rounded,
+                          size: 11,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
+
               const SizedBox(width: 14),
+
+              // Họ tên & Chip vai trò
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       user.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
-                        color: AppColors.textPrimary,
+                        color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.deepPurple.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'ADMIN',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.deepPurple,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
+                    const SizedBox(height: 5),
+                    _buildRoleChip(isAdmin: isAdmin, isManager: isManager),
                   ],
                 ),
               ),
+
+              // Nút icon bút chì góc trên bên phải cho Admin & Quản lý
+              if (!isEmployee)
+                IconButton(
+                  onPressed: _openEditProfileDialog,
+                  icon: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: const Icon(
+                      Icons.edit_outlined,
+                      size: 16,
+                      color: Color(0xFF475569),
+                    ),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 16),
-          const Divider(height: 1, color: AppColors.border),
-          const SizedBox(height: 12),
 
-          _buildProfileInfoItem(
-            icon: Icons.badge_outlined,
+          const SizedBox(height: 18),
+          const Divider(height: 1, color: Color(0xFFF1F5F9)),
+          const SizedBox(height: 14),
+
+          // Các dòng thông tin
+          _buildInfoRow(
+            icon: Icons.person_outline_rounded,
             label: 'Tên đăng nhập',
-            value: '@${user.username}',
+            value: user.username,
           ),
-          const SizedBox(height: 8),
-          _buildProfileInfoItem(
+          const SizedBox(height: 12),
+          _buildInfoRow(
             icon: Icons.email_outlined,
-            label: 'Email nhận mã OTP',
-            value: user.email.isEmpty ? 'Chưa thiết lập' : user.email,
+            label: 'Email nhận OTP',
+            value: user.email,
           ),
-          const SizedBox(height: 8),
-          _buildProfileInfoItem(
-            icon: Icons.business_outlined,
-            label: 'Phòng ban',
-            value: user.department.isEmpty ? 'Ban Quản trị' : user.department,
-          ),
-          const SizedBox(height: 16),
 
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: _openEditProfileDialog,
-              icon: const Icon(Icons.edit_outlined, size: 18, color: AppColors.teal),
-              label: const Text(
-                'Chỉnh sửa hồ sơ',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.teal,
+          // Phòng ban (Nhân viên và Quản lý)
+          if (!isAdmin) ...[
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.corporate_fare_outlined,
+              label: 'Phòng ban',
+              value: () {
+                final d = user.department.trim();
+                if (d.isEmpty) return 'Chưa phân phòng ban';
+                return d.toLowerCase().startsWith('phòng') ? d : 'Phòng $d';
+              }(),
+              highlightValue: true,
+            ),
+          ],
+
+          // Nút "Chỉnh sửa hồ sơ" viền dành riêng cho Nhân viên
+          if (isEmployee) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openEditProfileDialog,
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text(
+                  'Chỉnh sửa hồ sơ',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF006766),
+                  side: const BorderSide(color: Color(0xFF006766), width: 1.2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
                 ),
               ),
-              style: OutlinedButton.styleFrom(
-                backgroundColor: AppColors.teal.withValues(alpha: 0.05),
-                side: BorderSide(color: AppColors.teal.withValues(alpha: 0.35), width: 1.2),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildProfileInfoItem({
+  Widget _buildRoleChip({required bool isAdmin, required bool isManager}) {
+    if (isAdmin) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.shield_rounded, size: 11, color: Colors.amber),
+            SizedBox(width: 4),
+            Text(
+              'Quản trị viên',
+              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Colors.white),
+            ),
+          ],
+        ),
+      );
+    } else if (isManager) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE6F4F1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF99D5CF)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.groups_rounded, size: 12, color: Color(0xFF006766)),
+            SizedBox(width: 4),
+            Text(
+              'Quản lý',
+              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF006766)),
+            ),
+          ],
+        ),
+      );
+    } else {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: const Text(
+          'Nhân viên',
+          style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF475569)),
+        ),
+      );
+    }
+  }
+
+  Widget _buildInfoRow({
     required IconData icon,
     required String label,
     required String value,
+    bool highlightValue = false,
   }) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: AppColors.textSecondary),
-        const SizedBox(width: 8),
+        Icon(icon, size: 17, color: const Color(0xFF64748B)),
+        const SizedBox(width: 10),
         Text(
-          '$label: ',
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w400,
+          ),
         ),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
+        const Spacer(),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: highlightValue ? const Color(0xFF006766) : const Color(0xFF0F172A),
           ),
         ),
       ],
     );
   }
 
-  /// 8. Thẻ Khuôn mặt
-  Widget _buildFaceCard() {
-    final isEnrolled = _faceEnrolled == true;
+  // ===========================================================================
+  // WIDGET CON: KHỐI QUẢN TRỊ HỆ THỐNG (ADMIN)
+  // ===========================================================================
+  Widget _buildAdminSystemSection() {
+    final officeRadius = c.data.office.radius.toInt();
+    final shiftsCount = c.data.shifts.length;
+    final deptsCount = c.data.departments.length;
 
-    return AppCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.teal.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.face_retouching_natural_rounded, color: AppColors.teal, size: 20),
-              ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Xác thực khuôn mặt',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-                ),
-              ),
-              StatusChip(
-                isEnrolled ? 'Đã đăng ký' : 'Chưa đăng ký',
-                icon: isEnrolled ? Icons.check_circle_outline : Icons.radio_button_unchecked,
-              ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Quản trị hệ thống',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF0F172A),
           ),
-          const SizedBox(height: 10),
-
-          // Câu về QR chỉ hiện khi requireQr = true
-          if (AppConfig.requireQr)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Mã QR và GPS là bắt buộc khi chấm công.',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildSystemCard(
+                icon: Icons.location_on_rounded,
+                iconBg: const Color(0xFFE0F2FE),
+                iconColor: const Color(0xFF0284C7),
+                title: 'Nơi làm việc',
+                subtitle: 'Trụ sở • $officeRadius m',
+                onTap: _viewOfficeLocation,
               ),
             ),
-
-          if (_faceError != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _faceError!,
-                style: const TextStyle(fontSize: 12, color: AppColors.error),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSystemCard(
+                icon: Icons.schedule_rounded,
+                iconBg: const Color(0xFFDCFCE7),
+                iconColor: const Color(0xFF16A34A),
+                title: 'Ca làm',
+                subtitle: '$shiftsCount ca',
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Hệ thống hiện có $shiftsCount ca làm việc đang hoạt động.')),
+                  );
+                },
               ),
             ),
-
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Cho phép đăng nhập bằng camera + OTP', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            subtitle: const Text('Áp dụng mẫu khuôn mặt cho xác thực khi mở ứng dụng', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-            value: _allowFaceLogin,
-            onChanged: _faceBusy ? null : (val) => setState(() => _allowFaceLogin = val),
-          ),
-          const SizedBox(height: 10),
-
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  height: 48,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF0F7C8A), Color(0xFF14B8A6)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF0F7C8A).withValues(alpha: 0.28),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: ElevatedButton.icon(
-                    onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: false),
-                    icon: _faceBusy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : Icon(isEnrolled ? Icons.photo_camera_front_outlined : Icons.add_a_photo_outlined, size: 18, color: Colors.white),
-                    label: Text(
-                      isEnrolled ? 'Đăng ký lại mẫu' : 'Đăng ký khuôn mặt',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      foregroundColor: Colors.white,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSystemCard(
+                icon: Icons.business_rounded,
+                iconBg: const Color(0xFFF3E8FF),
+                iconColor: const Color(0xFF9333EA),
+                title: 'Phòng ban',
+                subtitle: '$deptsCount phòng',
+                onTap: () => DepartmentManagementSheet.show(context, c),
               ),
-              if (isEnrolled) ...[
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: true),
-                    icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 18),
-                    label: const Text(
-                      'Xóa mẫu',
-                      style: TextStyle(color: AppColors.error, fontSize: 13, fontWeight: FontWeight.w700),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: AppColors.errorBg,
-                      side: const BorderSide(color: Color(0xFFFECACA), width: 1.2),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
-  String _getBiometricLabel() {
-    if (_bioTypes.any((t) => t.toString().contains('face'))) return 'Face ID';
-    if (_bioTypes.any((t) => t.toString().contains('fingerprint'))) return 'Vân tay';
-    return 'Sinh trắc học';
-  }
-
-  /// 9. Thẻ Sinh trắc học
-  Widget _buildBiometricCard() {
-    String bioStatusText;
-    IconData bioStatusIcon;
-    Color bioStatusColor;
-
-    if (!_bioSupported) {
-      bioStatusText = 'Thiết bị chưa hỗ trợ';
-      bioStatusIcon = Icons.cancel_outlined;
-      bioStatusColor = AppColors.textSecondary;
-    } else if (_bioEnrolled) {
-      bioStatusText = 'Đã bật';
-      bioStatusIcon = Icons.check_circle_outline;
-      bioStatusColor = AppColors.success;
-    } else {
-      bioStatusText = 'Chưa kích hoạt';
-      bioStatusIcon = Icons.radio_button_unchecked;
-      bioStatusColor = AppColors.warning;
-    }
-
-    return AppCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.teal.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.fingerprint_rounded, color: AppColors.teal, size: 20),
-              ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Đăng nhập sinh trắc học',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-                ),
-              ),
-              StatusChip(bioStatusText, icon: bioStatusIcon),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Mở khóa nhanh bằng vân tay hoặc Face ID trên thiết bị mà không cần nhập lại mã OTP.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.35),
-          ),
-          const SizedBox(height: 6),
-
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Bật xác thực sinh trắc', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            subtitle: Text(
-              _bioSupported
-                  ? (_bioEnrolled ? 'Đang kích hoạt ${_getBiometricLabel()}' : 'Gạt để kích hoạt ${_getBiometricLabel()}')
-                  : 'Thiết bị không có cảm biến vân tay/Face ID hợp lệ',
-              style: TextStyle(fontSize: 11, color: bioStatusColor),
+  Widget _buildSystemCard({
+    required IconData icon,
+    required Color iconBg,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
             ),
-            value: _bioEnrolled,
-            onChanged: (_bioSupported && !_bioLoading) ? (_) => _toggleBiometric() : null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 10. Thẻ Vị trí hiện tại
-  Widget _buildLocationCard() {
-    return AppCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.teal.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.my_location_rounded, color: AppColors.teal, size: 20),
-              ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Kiểm tra vị trí GPS',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Xác định tọa độ GPS và địa chỉ thực tế xem bạn có đang nằm trong bán kính nơi làm việc hay không.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.35),
-          ),
-          const SizedBox(height: 14),
-
-          Container(
-            width: double.infinity,
-            height: 48,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF0F7C8A), Color(0xFF14B8A6)],
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF0F7C8A).withValues(alpha: 0.28),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+              child: Icon(icon, size: 16, color: iconColor),
             ),
-            child: ElevatedButton.icon(
-              onPressed: _isLocating ? null : _determineAndShowCurrentLocation,
-              icon: _isLocating
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.my_location_rounded, size: 18, color: Colors.white),
-              label: const Text(
-                'Xác định vị trí hiện tại',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: Colors.white,
-                shadowColor: Colors.transparent,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 11. Mục Về ứng dụng (Gập mặc định)
-  Widget _buildAboutAppTile() {
-    return AppCard(
-      padding: EdgeInsets.zero,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,
-          leading: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.input,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(Icons.info_outline_rounded, color: AppColors.navy, size: 20),
-          ),
-          title: const Text(
-            'Về ứng dụng',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-          ),
-          subtitle: const Text(
-            'Chấm Công Thông Minh • Nhóm 09',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-          ),
-          children: const [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Divider(color: AppColors.border, height: 1),
-                  SizedBox(height: 12),
-                  Text(
-                    'Thông tin đồ án & Công nghệ tích hợp:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    '• Nhóm thực hiện: Nhóm 09 — Tống Nhật Bảo An\n'
-                    '• Backend: ASP.NET Core 10 (Render Cloud + Neon PostgreSQL)\n'
-                    '• Xác thực bảo mật: Mật khẩu + OTP Brevo HTTPS API + Biometric Secure Storage\n'
-                    '• Chấm công: GPS Geofencing + Nhận diện khuôn mặt (Face Matching)\n'
-                    '• Thống kê: Thống kê và cảnh báo tự động + Biểu đồ fl_chart',
-                    style: TextStyle(fontSize: 12, height: 1.6, color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B)),
             ),
           ],
         ),
@@ -1410,30 +1419,328 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
     );
   }
 
-  /// 12. Nút Đăng xuất ở cuối trang (#FDECEC, chữ #D64545)
-  Widget _buildLogoutButton() {
-    return InkWell(
-      onTap: widget.onLogout,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: AppColors.errorBg,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFFECACA), width: 1.2),
+  // ===========================================================================
+  // WIDGET CON: KHỐI NHÓM CỦA TÔI (QUẢN LÝ)
+  // ===========================================================================
+  Widget _buildManagerTeamSection() {
+    final deptName = c.user?.department.isNotEmpty == true ? c.user!.department : 'Kinh doanh';
+    final deptEmployees = c.data.employees
+        .where((e) => e.active && e.department.toLowerCase() == deptName.toLowerCase())
+        .toList();
+    final deptEmpIds = deptEmployees.map((e) => e.id).toSet();
+    final pendingCount = c.data.requests
+        .where((r) => r.status == 'pending' && deptEmpIds.contains(r.employeeId))
+        .length;
+
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final checkedInTodayCount = c.data.attendance
+        .where((a) => deptEmpIds.contains(a.employeeId) && a.checkIn.toLocal().toString().startsWith(todayStr))
+        .map((a) => a.employeeId)
+        .toSet()
+        .length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Nhóm của tôi',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            if (widget.onNavigateToTimesheet != null)
+              GestureDetector(
+                onTap: widget.onNavigateToTimesheet,
+                child: const Text(
+                  'Xem bảng công',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF006766),
+                  ),
+                ),
+              ),
+          ],
         ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildTeamMetricCard(
+                value: '${deptEmployees.length}',
+                label: 'Thành viên',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildTeamMetricCard(
+                value: '$pendingCount',
+                label: 'Đơn chờ duyệt',
+                isHighlighted: pendingCount > 0,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildTeamMetricCard(
+                value: '$checkedInTodayCount/${deptEmployees.length}',
+                label: 'Đã chấm công',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTeamMetricCard({
+    required String value,
+    required String label,
+    bool isHighlighted = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: isHighlighted ? const Color(0xFFEA580C) : const Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET CON: KHỐI BẢO MẬT (CHUNG CHO CẢ 3 VAI TRÒ)
+  // ===========================================================================
+  Widget _buildSecuritySection({required bool isEmployee}) {
+    final isEnrolled = _faceEnrolled == true;
+    final isAdmin = c.isAdmin;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Bảo mật',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // 1. Khuôn mặt
+              _buildSecurityTile(
+                icon: Icons.face_retouching_natural_rounded,
+                iconBg: const Color(0xFFE6F4F1),
+                iconColor: const Color(0xFF006766),
+                title: 'Khuôn mặt',
+                subtitle: isEnrolled ? 'Đã đăng ký mẫu' : 'Chưa đăng ký mẫu',
+                trailing: TextButton(
+                  onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: false),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    isEnrolled ? 'Đăng ký lại' : 'Đăng ký',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF006766),
+                    ),
+                  ),
+                ),
+              ),
+
+              const Divider(height: 1, indent: 56, color: Color(0xFFF1F5F9)),
+
+              // 2. Đăng nhập bằng camera + OTP (dành cho Nhân viên)
+              if (isEmployee) ...[
+                _buildSecurityTile(
+                  icon: Icons.camera_alt_outlined,
+                  iconBg: const Color(0xFFE6F4F1),
+                  iconColor: const Color(0xFF006766),
+                  title: 'Đăng nhập bằng camera + OTP',
+                  subtitle: 'Dùng khuôn mặt thay mật khẩu',
+                  trailing: Switch(
+                    value: _allowFaceLogin && isEnrolled,
+                    onChanged: isEnrolled
+                        ? (v) => _setFaceLoginPreference(v)
+                        : null,
+                    activeThumbColor: const Color(0xFF006766),
+                  ),
+                ),
+                const Divider(height: 1, indent: 56, color: Color(0xFFF1F5F9)),
+              ],
+
+              // 3. Vân tay của điện thoại
+              _buildSecurityTile(
+                icon: Icons.fingerprint_rounded,
+                iconBg: const Color(0xFFE6F4F1),
+                iconColor: const Color(0xFF006766),
+                title: 'Vân tay của điện thoại',
+                subtitle: _bioEnrolled
+                    ? (isAdmin ? 'Mở app nhanh, không cần nhập mật khẩu' : 'Đã kích hoạt')
+                    : 'Chưa kích hoạt',
+                trailing: Switch(
+                  value: _bioEnrolled,
+                  onChanged: (_bioSupported && !_bioLoading)
+                      ? (_) => _toggleBiometric()
+                      : null,
+                  activeThumbColor: const Color(0xFF006766),
+                ),
+              ),
+
+              const Divider(height: 1, indent: 56, color: Color(0xFFF1F5F9)),
+
+              // 4. Đổi mật khẩu
+              InkWell(
+                onTap: _openChangePasswordDialog,
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+                child: _buildSecurityTile(
+                  icon: Icons.lock_outline_rounded,
+                  iconBg: const Color(0xFFE6F4F1),
+                  iconColor: const Color(0xFF006766),
+                  title: 'Đổi mật khẩu',
+                  subtitle: 'Cần xác nhận bằng OTP',
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFF94A3B8),
+                    size: 22,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSecurityTile({
+    required IconData icon,
+    required Color iconBg,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required Widget trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: iconBg,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 18, color: iconColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          trailing,
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET CON: NÚT ĐĂNG XUẤT
+  // ===========================================================================
+  Widget _buildLogoutButton() {
+    return Container(
+      width: double.infinity,
+      height: 48,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF1F2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFECDD3)),
+      ),
+      child: InkWell(
+        onTap: _handleLogout,
+        borderRadius: BorderRadius.circular(16),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.logout_rounded, color: AppColors.error, size: 20),
+            Icon(Icons.logout_rounded, color: Color(0xFFE11D48), size: 18),
             SizedBox(width: 8),
             Text(
-              'Đăng xuất tài khoản',
+              'Đăng xuất',
               style: TextStyle(
-                fontSize: 15,
+                color: Color(0xFFE11D48),
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: AppColors.error,
               ),
             ),
           ],

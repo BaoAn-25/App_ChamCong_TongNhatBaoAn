@@ -99,6 +99,118 @@ class _AuthPageState extends State<AuthPage> {
     _loadRememberedUsername();
     _otpController.addListener(_onOtpChanged);
     _otpFocusNode.addListener(_onOtpChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAccountLockNotice();
+    });
+  }
+
+  @override
+  void didUpdateWidget(AuthPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAccountLockNotice();
+    });
+  }
+
+  void _checkAccountLockNotice() {
+    final notice = widget.controller.accountLockNotice;
+    if (notice != null && mounted) {
+      widget.controller.accountLockNotice = null;
+      _showAccountLockedDialog(notice);
+    }
+  }
+
+  Future<void> _showAccountLockedDialog(String message) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFEE2E2),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.lock_person_rounded,
+                size: 34,
+                color: Color(0xFFDC2626),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Tài khoản đã bị tạm khóa',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF475569),
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.shield_outlined, size: 16, color: Color(0xFF64748B)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Phiên làm việc đã kết thúc để đảm bảo an toàn thông tin.',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AuthColors.navy,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Đã hiểu',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadRememberedUsername() async {
@@ -1906,18 +2018,22 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   Widget _buildErrorBanner() {
+    final isLocked = _error!.contains('khóa') || _error!.contains('tạm khóa');
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF2F2),
+        color: isLocked ? const Color(0xFFFEE2E2) : const Color(0xFFFEF2F2),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFECACA)),
+        border: Border.all(
+          color: isLocked ? const Color(0xFFFCA5A5) : const Color(0xFFFECACA),
+          width: isLocked ? 1.5 : 1.0,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.error_outline_rounded,
+          Icon(
+            isLocked ? Icons.lock_person_rounded : Icons.error_outline_rounded,
             size: 20,
             color: AuthColors.error,
           ),
@@ -1925,10 +2041,11 @@ class _AuthPageState extends State<AuthPage> {
           Expanded(
             child: Text(
               _error!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
-                color: Color(0xFFB91C1C),
-                fontWeight: FontWeight.w500,
+                color: const Color(0xFFB91C1C),
+                fontWeight: isLocked ? FontWeight.w600 : FontWeight.w500,
+                height: 1.35,
               ),
             ),
           ),

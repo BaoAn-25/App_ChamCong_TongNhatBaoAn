@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -73,8 +73,12 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         var username = (r.Username ?? "").Trim().ToLowerInvariant();
         var emp = await db.Employees.FirstOrDefaultAsync(e => e.Username == username);
         var passwordOk = BCrypt.Net.BCrypt.Verify(r.Password ?? "", emp?.PasswordHash ?? DummyHash);
-        if (emp == null || !passwordOk || !emp.Active || !emp.EmailVerified)
-            return Fail("Tên đăng nhập hoặc mật khẩu không đúng, tài khoản bị khóa hoặc chưa xác minh email.", 401);
+        if (emp == null || !passwordOk)
+            return Fail("Tên đăng nhập hoặc mật khẩu không đúng.", 401);
+        if (!emp.Active)
+            return Fail("Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ bộ phận nhân sự để được hỗ trợ.", 403);
+        if (!emp.EmailVerified)
+            return Fail("Tài khoản chưa được xác minh email. Vui lòng kiểm tra email để kích hoạt.", 403);
 
         // Kiểm tra thiết bị tin cậy: nếu đúng máy quen thuộc đã từng xác thực OTP -> Bỏ qua OTP, cấp token vào thẳng
         if (!string.IsNullOrEmpty(r.DeviceId) && tokens.VerifyTrustToken(emp, r.DeviceId, r.TrustToken))
@@ -99,7 +103,8 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
     {
         var (emp, error) = await otp.VerifyAsync(r.ChallengeId, r.Code, Login);
         if (emp == null) return Fail(error!, 401);
-        if (!emp.Active || !emp.EmailVerified) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
+        if (!emp.Active) return Fail("Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ bộ phận nhân sự để được hỗ trợ.", 403);
+        if (!emp.EmailVerified) return Fail("Tài khoản chưa được xác minh email.", 403);
         return Ok(await IssueAsync(emp, r.DeviceId));
     }
 
@@ -150,7 +155,12 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         if (stored == null || stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
             return Fail("Phiên đăng nhập hết hạn.", 401);
         var emp = await db.Employees.FindAsync(stored.EmployeeId);
-        if (emp == null || !emp.Active) return Fail("Phiên đăng nhập hết hạn.", 401);
+        if (emp == null || !emp.Active)
+        {
+            stored.Revoked = true;
+            await db.SaveChangesAsync();
+            return Fail("Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ bộ phận nhân sự để được hỗ trợ.", 403);
+        }
         stored.Revoked = true;
         return Ok(await IssueAsync(emp));
     }
@@ -197,10 +207,10 @@ public class MeController(AppDb db) : ApiBase
     }
 }
 
-[ApiController, Route("api/employees"), Authorize(Roles = Roles.AdminOrManager)]
+[ApiController, Route("api/employees"), Authorize]
 public class EmployeesController(AppDb db) : ApiBase
 {
-    [HttpGet]
+    [HttpGet, Authorize(Roles = Roles.AdminOrManager)]
     public async Task<IActionResult> List() =>
         Ok(await db.Employees.OrderBy(e => e.Name).Select(e => EmployeeDto.From(e)).ToListAsync());
 
@@ -247,10 +257,21 @@ public class EmployeesController(AppDb db) : ApiBase
         if (!Roles.IsValid(role)) return Fail("Vai trò không hợp lệ.");
         var active = isAdmin ? (r.Active ?? emp.Active) : emp.Active;
         if (isAdmin && id == UserId && (!active || role != Roles.Admin)) return Fail("Không được khóa hoặc hạ quyền chính mình.", 409);
+        if (emp.Role == Roles.Admin && (!active || role != Roles.Admin))
+        {
+            var activeAdminCount = await db.Employees.CountAsync(e => e.Role == Roles.Admin && e.Active);
+            if (activeAdminCount <= 1)
+                return Fail("Hệ thống phải có ít nhất 1 tài khoản Quản trị viên (Admin) đang hoạt động. Vui lòng phân quyền Admin cho tài khoản khác trước khi khóa hoặc hạ quyền tài khoản này.", 409);
+        }
         if (await db.Employees.AnyAsync(e => e.Id != id && (e.Username == username || e.Email == email)))
             return Fail("Email hoặc tên đăng nhập đã tồn tại.", 409);
 
         emp.Name = name.Trim(); emp.Username = username; emp.Email = email; emp.Role = role; emp.Active = active;
+        if (!active)
+        {
+            var tokensToRevoke = await db.RefreshTokens.Where(t => t.EmployeeId == id && !t.Revoked).ToListAsync();
+            foreach (var t in tokensToRevoke) t.Revoked = true;
+        }
         if (isAdmin && r.Department != null) emp.Department = r.Department.Trim();
         if (!string.IsNullOrEmpty(r.Password)) emp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(r.Password);
         try { await db.SaveChangesAsync(); }
@@ -264,6 +285,12 @@ public class EmployeesController(AppDb db) : ApiBase
         if (id == UserId) return Fail("Không thể xóa tài khoản đang đăng nhập.", 409);
         var emp = await db.Employees.FindAsync(id);
         if (emp == null) return Fail("Không tìm thấy nhân viên.", 404);
+        if (emp.Role == Roles.Admin)
+        {
+            var adminCount = await db.Employees.CountAsync(e => e.Role == Roles.Admin);
+            if (adminCount <= 1)
+                return Fail("Không thể xóa tài khoản Quản trị viên (Admin) duy nhất trong hệ thống. Vui lòng phân quyền Admin cho tài khoản khác trước khi xóa tài khoản này.", 409);
+        }
         if (await db.Attendance.AnyAsync(a => a.EmployeeId == id) || await db.WorkRequests.AnyAsync(r => r.EmployeeId == id))
             return Fail("Nhân viên đã có lịch sử. Hãy khóa tài khoản để giữ dữ liệu.", 409);
         db.Employees.Remove(emp);

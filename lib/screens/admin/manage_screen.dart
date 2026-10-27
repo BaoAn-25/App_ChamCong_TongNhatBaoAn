@@ -120,6 +120,79 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
   }
 
   /// Mở Bottom Sheet cấu hình văn phòng
+  /// Hiển thị Dialog thông báo trạng thái thao tác đẹp mắt, hiện đại
+  Future<void> _showStatusDialog({
+    required String title,
+    required String message,
+    IconData icon = Icons.check_circle_rounded,
+    Color iconColor = const Color(0xFF16A34A),
+    Color iconBgColor = const Color(0xFFDCFCE7),
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: iconBgColor,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 32),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF64748B),
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F7C8A),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Đã hiểu',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _openOfficeConfigSheet() {
     OfficeConfigSheet.show(context, c, onSaved: () => setState(() {}));
   }
@@ -204,10 +277,33 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
     );
 
     if (result != null && mounted) {
-      final copy = Employee.fromJson(employee.toJson());
-      copy.shiftId = result.isEmpty ? null : result;
-      await c.saveEmployee(copy);
-      setState(() {});
+      try {
+        final copy = Employee.fromJson(employee.toJson());
+        copy.shiftId = result.isEmpty ? null : result;
+        await c.saveEmployee(copy);
+        if (mounted) {
+          setState(() {});
+          final assignedShift = c.data.shifts.where((s) => s.id == copy.shiftId).firstOrNull;
+          final shiftText = assignedShift != null ? 'ca "${assignedShift.name}"' : 'chế độ "Chưa phân ca"';
+          await _showStatusDialog(
+            title: 'Phân ca thành công',
+            message: 'Đã cập nhật $shiftText cho nhân viên "${employee.name}".',
+            icon: Icons.schedule_rounded,
+            iconColor: const Color(0xFF0F7C8A),
+            iconBgColor: const Color(0xFFE6F4F6),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          await _showStatusDialog(
+            title: 'Lỗi phân ca',
+            message: e.toString().replaceAll('Exception: ', ''),
+            icon: Icons.error_outline_rounded,
+            iconColor: const Color(0xFFDC2626),
+            iconBgColor: const Color(0xFFFEE2E2),
+          );
+        }
+      }
     }
   }
 
@@ -636,18 +732,43 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Avatar chữ cái
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: roleColor.withValues(alpha: 0.12),
-              child: Text(
-                employee.name.isNotEmpty ? employee.name[0].toUpperCase() : 'U',
-                style: TextStyle(
-                  color: roleColor,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
+            // Avatar chữ cái kèm icon ổ khóa khi tài khoản bị khóa
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: employee.active
+                      ? roleColor.withValues(alpha: 0.12)
+                      : Colors.grey.shade200,
+                  child: Text(
+                    employee.name.isNotEmpty ? employee.name[0].toUpperCase() : 'U',
+                    style: TextStyle(
+                      color: employee.active ? roleColor : Colors.grey,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
                 ),
-              ),
+                if (!employee.active)
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(2.5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                      child: const Icon(
+                        Icons.lock_rounded,
+                        size: 11,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 12),
 
@@ -670,15 +791,41 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      // Chấm trạng thái hoạt động/khóa
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: employee.active ? AppColors.success : AppColors.error,
-                          shape: BoxShape.circle,
+                      // Chấm trạng thái hoặc Huy hiệu ĐÃ KHÓA nổi bật
+                      if (employee.active)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppColors.success,
+                            shape: BoxShape.circle,
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEF2F2),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFFECACA)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock_rounded, size: 10, color: Color(0xFFDC2626)),
+                              SizedBox(width: 3),
+                              Text(
+                                'ĐÃ KHÓA',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFFDC2626),
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 2),
@@ -765,16 +912,114 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                 } else if (val == 'assign_shift') {
                   _openAssignShiftDialog(employee);
                 } else if (val == 'toggle_lock') {
-                  final copy = Employee.fromJson(employee.toJson())..active = !employee.active;
-                  await c.saveEmployee(copy);
-                  setState(() {});
+                  final willLock = employee.active;
+                  // Kiểm tra ràng buộc không được khóa Admin duy nhất
+                  final activeAdminCount = c.data.employees.where((e) => e.isAdmin && e.active).length;
+                  if (employee.isAdmin && willLock && activeAdminCount <= 1) {
+                    await _showStatusDialog(
+                      title: 'Không thể khóa Admin',
+                      message: 'Tài khoản "${employee.name}" là Quản trị viên (Admin) duy nhất đang hoạt động trong hệ thống.\n\nHệ thống bắt buộc phải có ít nhất 1 Admin điều hành. Vui lòng phân quyền Admin cho tài khoản khác trước khi khóa tài khoản này.',
+                      icon: Icons.shield_rounded,
+                      iconColor: const Color(0xFFDC2626),
+                      iconBgColor: const Color(0xFFFEE2E2),
+                    );
+                    return;
+                  }
+                  if (employee.id == c.user?.id && willLock) {
+                    await _showStatusDialog(
+                      title: 'Thao tác không hợp lệ',
+                      message: 'Bạn không thể tự khóa tài khoản đang đăng nhập của chính mình.',
+                      icon: Icons.block_rounded,
+                      iconColor: const Color(0xFFDC2626),
+                      iconBgColor: const Color(0xFFFEE2E2),
+                    );
+                    return;
+                  }
+
+                  try {
+                    final copy = Employee.fromJson(employee.toJson())..active = !employee.active;
+                    await c.saveEmployee(copy);
+                    if (mounted) {
+                      setState(() {});
+                      if (willLock) {
+                        await _showStatusDialog(
+                          title: 'Đã khóa tài khoản',
+                          message: 'Tài khoản "${employee.name}" đã bị khóa thành công. Người dùng này sẽ không thể đăng nhập vào ứng dụng.',
+                          icon: Icons.lock_rounded,
+                          iconColor: const Color(0xFFDC2626),
+                          iconBgColor: const Color(0xFFFEE2E2),
+                        );
+                      } else {
+                        await _showStatusDialog(
+                          title: 'Đã mở khóa tài khoản',
+                          message: 'Tài khoản "${employee.name}" đã được mở khóa thành công và có thể đăng nhập bình thường.',
+                          icon: Icons.lock_open_rounded,
+                          iconColor: const Color(0xFF16A34A),
+                          iconBgColor: const Color(0xFFDCFCE7),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      await _showStatusDialog(
+                        title: 'Lỗi cập nhật',
+                        message: e.toString().replaceAll('Exception: ', ''),
+                        icon: Icons.error_outline_rounded,
+                        iconColor: const Color(0xFFDC2626),
+                        iconBgColor: const Color(0xFFFEE2E2),
+                      );
+                    }
+                  }
                 } else if (val == 'delete') {
-                  if (hasHistory) return;
+                  // 1. Kiểm tra ràng buộc ít nhất 1 Admin trong hệ thống
+                  final adminCount = c.data.employees.where((e) => e.isAdmin).length;
+                  if (employee.isAdmin && adminCount <= 1) {
+                    await _showStatusDialog(
+                      title: 'Không thể xóa Admin',
+                      message: 'Tài khoản "${employee.name}" là Quản trị viên (Admin) duy nhất trong hệ thống.\n\nHệ thống bắt buộc phải có ít nhất 1 Admin để điều hành. Bạn hãy phân quyền Admin cho tài khoản khác trước khi xóa tài khoản này.',
+                      icon: Icons.shield_rounded,
+                      iconColor: const Color(0xFFDC2626),
+                      iconBgColor: const Color(0xFFFEE2E2),
+                    );
+                    return;
+                  }
+
+                  // 2. Không được xóa chính mình
+                  if (employee.id == c.user?.id) {
+                    await _showStatusDialog(
+                      title: 'Không thể xóa tài khoản',
+                      message: 'Bạn không thể tự xóa tài khoản đang đăng nhập của chính mình.',
+                      icon: Icons.block_rounded,
+                      iconColor: const Color(0xFFDC2626),
+                      iconBgColor: const Color(0xFFFEE2E2),
+                    );
+                    return;
+                  }
+
+                  // 3. Có lịch sử chấm công
+                  if (hasHistory) {
+                    await _showStatusDialog(
+                      title: 'Không thể xóa tài khoản',
+                      message: 'Nhân viên "${employee.name}" đã có dữ liệu chấm công hoặc đơn từ trong hệ thống. Để bảo toàn dữ liệu đối soát, bạn hãy dùng chức năng "Khóa tài khoản" thay vì xóa.',
+                      icon: Icons.info_outline_rounded,
+                      iconColor: const Color(0xFFEA580C),
+                      iconBgColor: const Color(0xFFFFF7ED),
+                    );
+                    return;
+                  }
+
                   final confirm = await showDialog<bool>(
                     context: context,
                     builder: (ctx) => AlertDialog(
-                      title: const Text('Xác nhận xóa tài khoản'),
-                      content: Text('Bạn có chắc chắn muốn xóa tài khoản ${employee.name}? Hành động này không thể hoàn tác.'),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      title: const Row(
+                        children: [
+                          Icon(Icons.delete_forever_rounded, color: AppColors.error),
+                          SizedBox(width: 8),
+                          Text('Xác nhận xóa tài khoản'),
+                        ],
+                      ),
+                      content: Text('Bạn có chắc chắn muốn xóa tài khoản "${employee.name}" (@${employee.username})?\nHành động này không thể hoàn tác.'),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(ctx, false),
@@ -784,6 +1029,7 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.error,
                             foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                           onPressed: () => Navigator.pop(ctx, true),
                           child: const Text('Xóa vĩnh viễn'),
@@ -791,9 +1037,31 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                       ],
                     ),
                   );
+
                   if (confirm == true && mounted) {
-                    await c.deleteEmployee(employee.id);
-                    setState(() {});
+                    try {
+                      await c.deleteEmployee(employee.id);
+                      if (mounted) {
+                        setState(() {});
+                        await _showStatusDialog(
+                          title: 'Xóa tài khoản thành công',
+                          message: 'Tài khoản "${employee.name}" đã được xóa hoàn toàn khỏi hệ thống.',
+                          icon: Icons.check_circle_rounded,
+                          iconColor: const Color(0xFF16A34A),
+                          iconBgColor: const Color(0xFFDCFCE7),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        await _showStatusDialog(
+                          title: 'Không thể xóa',
+                          message: e.toString().replaceAll('Exception: ', ''),
+                          icon: Icons.error_outline_rounded,
+                          iconColor: const Color(0xFFDC2626),
+                          iconBgColor: const Color(0xFFFEE2E2),
+                        );
+                      }
+                    }
                   }
                 }
               },
@@ -944,6 +1212,23 @@ class _EmployeeFormSheetState extends State<_EmployeeFormSheet> {
     setState(() => _busy = true);
     try {
       final isNew = widget.employee == null;
+
+      // Ràng buộc bảo vệ Admin duy nhất khi chỉnh sửa phân quyền
+      if (!isNew && widget.employee!.isAdmin) {
+        final activeAdminCount = widget.controller.data.employees.where((e) => e.isAdmin && e.active).length;
+        if ((_role != 'admin' || !_active) && activeAdminCount <= 1) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Hệ thống phải có ít nhất 1 Quản trị viên (Admin) đang hoạt động. Bạn không thể hạ quyền hoặc khóa tài khoản Admin duy nhất này.'),
+              backgroundColor: AppColors.error,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          setState(() => _busy = false);
+          return;
+        }
+      }
+
       final emp = Employee(
         id: widget.employee?.id ?? newId(),
         name: _nameCtrl.text.trim(),

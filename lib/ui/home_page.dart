@@ -16,12 +16,12 @@ import '../domain/models.dart';
 import 'common.dart';
 import 'punch_page.dart';
 import 'stats_page.dart';
-import 'biometric_page.dart';
-import 'face_page.dart';
 import '../widgets/shared_navy_header.dart';
 import '../widgets/attendance_detail_sheet.dart';
 import '../screens/admin/attendance_map_screen.dart';
 import '../screens/admin/admin_shell.dart';
+import '../screens/admin/account_screen.dart';
+import '../data/csv_export_service.dart';
 import '../screens/manager/manager_shell.dart';
 
 class HomePage extends StatefulWidget {
@@ -42,6 +42,19 @@ class _HomePageState extends State<HomePage> {
   bool _staffExpanded = false;
   DateTime _selectedTimesheetMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
 
+  Future<void> _exportMyTimesheetCsv(List<Attendance> monthRecords) async {
+    final user = c.user;
+    if (user == null) return;
+    await CsvExportService.exportTimesheet(
+      context: context,
+      controller: c,
+      records: monthRecords,
+      title: 'Nhân viên • ${user.name}',
+      fileNamePrefix: 'BangCong_${user.name}',
+      month: _selectedTimesheetMonth,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +73,7 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
+  // ignore: unused_element
   Future<void> _pickAvatar() async {
     final uid = c.user?.id;
     if (uid == null) return;
@@ -165,6 +179,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _openEditProfileDialog() async {
     final u = c.user;
     if (u == null) return;
@@ -3671,61 +3686,83 @@ class _HomePageState extends State<HomePage> {
                   showSubtitle: false,
                   controller: c,
                   bottomPadding: 60,
-                  customTrailing: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            setState(() {
-                              _selectedTimesheetMonth = DateTime(
-                                _selectedTimesheetMonth.year,
-                                _selectedTimesheetMonth.month - 1,
-                                1,
-                              );
-                            });
-                          },
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.chevron_left_rounded, color: Colors.white, size: 20),
-                          ),
+                  customTrailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: Text(
-                            'Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                setState(() {
+                                  _selectedTimesheetMonth = DateTime(
+                                    _selectedTimesheetMonth.year,
+                                    _selectedTimesheetMonth.month - 1,
+                                    1,
+                                  );
+                                });
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(Icons.chevron_left_rounded, color: Colors.white, size: 20),
+                              ),
                             ),
-                          ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              child: Text(
+                                'Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                setState(() {
+                                  _selectedTimesheetMonth = DateTime(
+                                    _selectedTimesheetMonth.year,
+                                    _selectedTimesheetMonth.month + 1,
+                                    1,
+                                  );
+                                });
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(Icons.chevron_right_rounded, color: Colors.white, size: 20),
+                              ),
+                            ),
+                          ],
                         ),
-                        InkWell(
+                      ),
+                      const SizedBox(width: 6),
+                      Tooltip(
+                        message: 'Xuất CSV bảng công',
+                        child: InkWell(
                           borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            setState(() {
-                              _selectedTimesheetMonth = DateTime(
-                                _selectedTimesheetMonth.year,
-                                _selectedTimesheetMonth.month + 1,
-                                1,
-                              );
-                            });
-                          },
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.chevron_right_rounded, color: Colors.white, size: 20),
+                          onTap: () => _exportMyTimesheetCsv(monthRecords),
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.16),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                            ),
+                            child: const Icon(Icons.download_rounded, color: Colors.white, size: 18),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
                 // 4 Metric cards floating across the bottom edge of the Navy header
@@ -3943,13 +3980,31 @@ class _HomePageState extends State<HomePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Gần đây',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Gần đây',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _exportMyTimesheetCsv(monthRecords),
+                        icon: const Icon(Icons.download_rounded, size: 14),
+                        label: const Text('Xuất CSV', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0F7C8A),
+                          side: const BorderSide(color: Color(0xFF0F7C8A), width: 1.1),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   if (monthRecords.isEmpty)
@@ -4827,305 +4882,23 @@ class _HomePageState extends State<HomePage> {
     save: (v) => c.reviewRequest(r.id, approve, v['Nhận xét']!),
   );
   Widget profile() {
-    final roleColor = c.isAdmin
-        ? Colors.amber.shade700
-        : c.user?.role == 'manager'
-        ? Colors.teal
-        : const Color(0xFF0284C7);
-    final roleBg = c.isAdmin
-        ? Colors.amber.shade50
-        : c.user?.role == 'manager'
-        ? Colors.teal.shade50
-        : const Color(0xFFE0F2FE);
-    final roleBorder = c.isAdmin
-        ? Colors.amber.shade300
-        : c.user?.role == 'manager'
-        ? Colors.teal.shade200
-        : const Color(0xFFBAE6FD);
-    final roleName = c.isAdmin
-        ? 'Quản trị viên (Admin)'
-        : c.user?.role == 'manager'
-        ? 'Quản lý (Manager)'
-        : 'Nhân viên (Employee)';
-
-    final isEmployee = !c.isStaff;
-    final header = isEmployee
-        ? SharedNavyHeader(
-            title: 'Tài khoản',
-            controller: c,
-          )
-        : null;
-
-    return list([
-      // Profile Header Card Hiện Đại
-      Container(
-        padding: const EdgeInsets.all(22),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                GestureDetector(
-                  onTap: _pickAvatar,
-                  child: Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 34,
-                        backgroundColor: const Color(0xFF087F8C),
-                        backgroundImage: _avatarBase64 != null
-                            ? MemoryImage(base64Decode(_avatarBase64!))
-                            : null,
-                        child: _avatarBase64 == null
-                            ? Text(
-                                c.user!.name.isNotEmpty
-                                    ? c.user!.name[0].toUpperCase()
-                                    : 'U',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              )
-                            : null,
-                      ),
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF087F8C),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: const Icon(
-                            Icons.camera_alt_rounded,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        c.user!.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: roleBg,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: roleBorder),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              c.isAdmin
-                                  ? Icons.shield_rounded
-                                  : c.user?.role == 'manager'
-                                  ? Icons.supervisor_account_rounded
-                                  : Icons.badge_rounded,
-                              size: 14,
-                              color: roleColor,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                roleName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: roleColor,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Divider(height: 1, color: Color(0xFFF1F5F9)),
-            const SizedBox(height: 16),
-            // Thông tin chi tiết
-            _profileInfoRow(
-              icon: Icons.account_circle_outlined,
-              label: 'Tên đăng nhập',
-              value: c.user!.username,
-            ),
-            const SizedBox(height: 12),
-            _profileInfoRow(
-              icon: Icons.email_outlined,
-              label: 'Email nhận OTP',
-              value: c.user!.email,
-            ),
-            const SizedBox(height: 12),
-            _profileInfoRow(
-              icon: Icons.corporate_fare_outlined,
-              label: 'Phòng ban',
-              value: c.user!.department.isEmpty
-                  ? 'Chưa phân công'
-                  : c.user!.department,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _openEditProfileDialog,
-                icon: const Icon(Icons.edit_rounded, size: 18),
-                label: const Text(
-                  'Chỉnh sửa hồ sơ cá nhân',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF087F8C),
-                  side: const BorderSide(color: Color(0xFF087F8C)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-      const SizedBox(height: 14),
-
-      // Card Sinh trắc học
-      FaceSettingsCard(controller: c),
-      BiometricSettingsCard(controller: c),
-
-      const SizedBox(height: 14),
-
-      // Card Vị trí GPS hiện tại
-      Section(
-        icon: Icons.my_location_rounded,
-        iconColor: const Color(0xFF087F8C),
-        title: 'Vị trí hiện tại',
-        subtitle: 'Xác định vị trí GPS chính xác — hiển thị địa chỉ thực tế.',
-        child: Column(
-          children: [
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: locating ? null : _showCurrentLocation,
-                icon: const Icon(Icons.my_location_rounded),
-                label: Text(
-                  locating
-                      ? 'Đang xác định vị trí…'
-                      : 'Xác định vị trí hiện tại',
-                ),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF087F8C),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-      const SizedBox(height: 16),
-
-      // NÚT ĐĂNG XUẤT ĐẶT DƯỚI CÙNG TÁCH BIỆT RÕ RÀNG
-      Container(
-        width: double.infinity,
-        height: 52,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.red.withValues(alpha: 0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: OutlinedButton.icon(
-          onPressed: () async {
-            final ok = await confirm(
-              context,
-              'Bạn có chắc chắn muốn đăng xuất khỏi tài khoản ${c.user!.name}?',
-            );
-            if (ok) {
-              await SessionStorage.clearSession();
-              c.logout();
-            }
-          },
-          icon: const Icon(
-            Icons.logout_rounded,
-            color: Color(0xFFDC2626),
-            size: 20,
-          ),
-          label: const Text(
-            'Đăng xuất tài khoản',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFFDC2626),
-            ),
-          ),
-          style: OutlinedButton.styleFrom(
-            backgroundColor: const Color(0xFFFEF2F2),
-            side: const BorderSide(color: Color(0xFFFECACA), width: 1.2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ),
-        ),
-      ),
-      const SizedBox(height: 20),
-      const Center(
-        child: Text(
-          'Chấm Công Thông Minh • Phiên bản 1.0.0\nNhóm 09 — Tống Nhật Bảo An',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), height: 1.5),
-        ),
-      ),
-      const SizedBox(height: 16),
-    ], header: header);
+    return AdminAccountScreen(
+      controller: c,
+      isTab: true,
+      onLogout: () async {
+        final ok = await confirm(
+          context,
+          'Bạn có chắc chắn muốn đăng xuất khỏi tài khoản ${c.user?.name}?',
+        );
+        if (ok) {
+          await SessionStorage.clearSession();
+          c.logout();
+        }
+      },
+    );
   }
 
+  // ignore: unused_element
   Widget _profileInfoRow({
     required IconData icon,
     required String label,

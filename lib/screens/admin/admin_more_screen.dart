@@ -3,6 +3,7 @@ import '../../core/app_theme.dart';
 import '../../domain/app_controller.dart';
 import '../../widgets/app_widgets.dart';
 import 'account_screen.dart';
+import '../../data/csv_export_service.dart';
 import 'statistics_screen.dart';
 import 'manage_screen.dart';
 import 'admin_management_dialogs.dart';
@@ -92,13 +93,15 @@ class AdminMoreScreen extends StatelessWidget {
     );
   }
 
-  void _exportCsvReport(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đang chuẩn bị file báo cáo chấm công định dạng CSV / Excel...'),
-        backgroundColor: AppColors.teal,
-        behavior: SnackBarBehavior.floating,
-      ),
+  Future<void> _exportCsvReport(BuildContext context) async {
+    final now = DateTime.now();
+    await CsvExportService.exportTimesheet(
+      context: context,
+      controller: c,
+      records: c.data.attendance,
+      title: 'Toàn bộ nhân sự công ty',
+      fileNamePrefix: 'BaoCao_BangCong_TongNhatBaoAn',
+      month: now,
     );
   }
 

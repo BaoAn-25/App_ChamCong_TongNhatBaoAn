@@ -742,6 +742,16 @@ class _RoleAssignmentSheetState extends State<RoleAssignmentSheet> {
                   : () async {
                       setDialogState(() => busy = true);
                       try {
+                        if (emp.isAdmin && currentRole != 'admin') {
+                          final adminCount = c.data.employees.where((e) => e.isAdmin && e.active).length;
+                          if (adminCount <= 1) {
+                            setDialogState(() {
+                              busy = false;
+                              error = 'Hệ thống phải có ít nhất 1 Quản trị viên (Admin). Bạn không thể hạ quyền Admin duy nhất này.';
+                            });
+                            return;
+                          }
+                        }
                         final updated = Employee(
                           id: emp.id,
                           name: emp.name,

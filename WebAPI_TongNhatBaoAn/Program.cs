@@ -42,9 +42,24 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             if (!Guid.TryParse(raw, out var uid)) { context.Fail("Invalid user."); return; }
             var db = context.HttpContext.RequestServices.GetRequiredService<AppDb>();
             var employee = await db.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == uid);
-            if (employee == null || !employee.Active || !employee.EmailVerified ||
-                employee.Role != context.Principal?.FindFirst("role")?.Value)
+            if (employee == null) { context.Fail("User not found."); return; }
+            if (!employee.Active) { context.Fail("Account locked."); return; }
+            if (!employee.EmailVerified || employee.Role != context.Principal?.FindFirst("role")?.Value)
                 context.Fail("Account access changed. Sign in again.");
+        },
+        OnChallenge = async context =>
+        {
+            if (context.AuthenticateFailure != null)
+            {
+                context.HandleResponse();
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                var isLocked = context.AuthenticateFailure.Message.Contains("Account locked");
+                var message = isLocked
+                    ? "Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ bộ phận nhân sự để được hỗ trợ."
+                    : "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.";
+                await context.Response.WriteAsJsonAsync(new { error = message, isLocked });
+            }
         }
     };
     o.TokenValidationParameters = new TokenValidationParameters

@@ -859,6 +859,34 @@ class _PunchPageState extends State<PunchPage> {
                           color: Colors.white,
                         ),
                       ),
+                      const SizedBox(height: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.corporate_fare_rounded, size: 12, color: Colors.white70),
+                            const SizedBox(width: 4),
+                            Text(
+                              () {
+                                final dept = c.user?.department.trim() ?? '';
+                                if (dept.isEmpty) return 'Chưa phân phòng ban';
+                                return dept.toLowerCase().startsWith('phòng') ? dept : 'Phòng $dept';
+                              }(),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),

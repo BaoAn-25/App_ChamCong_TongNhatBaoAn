@@ -25,6 +25,7 @@ class AppController extends ChangeNotifier {
   String? pendingUsername;
   String? pendingEmail;
   String? demoOtp;
+  String? accountLockNotice;
   OfficeQrTicket? currentServerQrTicket;
   String? get currentServerQr => currentServerQrTicket?.code;
 
@@ -66,11 +67,15 @@ class AppController extends ChangeNotifier {
     this.attendanceRepo,
     this.requestRepo,
   ) {
-    client.onUnauthorized = () {
+    client.onUnauthorized = ([String? reason]) {
+      final wasLoggedIn = _user != null;
       _user = null;
       data = AppData();
       lastSyncedAt = null;
       syncError = null;
+      if (wasLoggedIn && reason != null && (reason.contains('khóa') || reason.contains('tạm khóa'))) {
+        accountLockNotice = reason;
+      }
       notifyListeners();
     };
   }

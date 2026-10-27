@@ -23,7 +23,7 @@ class ApiClient {
 
   String? _accessToken;
   String? _refreshToken;
-  void Function()? onUnauthorized;
+  void Function([String? reason])? onUnauthorized;
 
   ApiClient({
     String? baseUrl,
@@ -195,17 +195,26 @@ class ApiClient {
     }
 
     if (allowRefresh && res.statusCode == 401 && _refreshToken != null) {
-      final refreshed = await _tryRefresh();
+      String? lockReason;
+      try {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        if (body is Map && (body['isLocked'] == true || (body['error']?.toString().contains('khóa') ?? false))) {
+          lockReason = body['error']?.toString();
+        }
+      } catch (_) {}
+
+      final refreshed = lockReason == null && await _tryRefresh();
       if (refreshed) {
         try {
           res = await req().timeout(const Duration(seconds: 90));
         } catch (_) {}
       } else {
         await clearTokens();
-        onUnauthorized?.call();
+        final reason = lockReason ?? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+        onUnauthorized?.call(reason);
         throw ApiException(
           401,
-          'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+          reason,
         );
       }
     }

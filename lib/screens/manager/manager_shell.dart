@@ -32,14 +32,6 @@ class ManagerShell extends StatefulWidget {
 class _ManagerShellState extends State<ManagerShell> {
   late int _currentPage;
 
-  static const List<String> _pageTitles = [
-    'Tổng quan nhóm',
-    'Nhân sự phòng ban',
-    'Bảng công nhóm',
-    'Quản lý đơn từ',
-    'Thêm',
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -51,6 +43,14 @@ class _ManagerShellState extends State<ManagerShell> {
   String get _managerDept => c.user?.department.isNotEmpty == true
       ? c.user!.department
       : (c.data.departments.isNotEmpty ? c.data.departments.first.name : 'Kinh doanh');
+
+  String get _cleanDeptName {
+    final dept = _managerDept.trim();
+    if (dept.toLowerCase().startsWith('phòng')) {
+      return dept.substring(5).trim();
+    }
+    return dept;
+  }
 
   int get _pendingRequestsCount {
     try {
@@ -112,15 +112,22 @@ class _ManagerShellState extends State<ManagerShell> {
         .where((e) => e.active && e.department.toLowerCase() == _managerDept.toLowerCase())
         .length;
 
-    final String title = _currentPage < _pageTitles.length ? _pageTitles[_currentPage] : 'Quản lý';
+    final String title = switch (_currentPage) {
+      0 => 'Nhóm $_cleanDeptName',
+      1 => 'Nhân sự nhóm',
+      2 => 'Bảng công nhóm',
+      3 => 'Đơn từ',
+      4 => 'Thêm',
+      _ => 'Quản lý',
+    };
 
     final String subtitle = switch (_currentPage) {
-      0 => '${_formatTodayVietnamese()} • Phòng $_managerDept',
-      1 => 'Phòng $_managerDept • $deptEmployeesCount thành viên',
-      2 => 'Bảng chấm công phòng $_managerDept',
-      3 => 'Duyệt đơn phòng $_managerDept',
-      4 => 'Quản lý phòng $_managerDept',
-      _ => 'Quản lý phòng $_managerDept',
+      0 => '${_formatTodayVietnamese()} • $deptEmployeesCount nhân viên',
+      1 => 'Nhóm $_cleanDeptName • $deptEmployeesCount thành viên',
+      2 => 'Nhóm $_cleanDeptName • $deptEmployeesCount nhân viên',
+      3 => 'Đơn của nhóm $_cleanDeptName',
+      4 => 'Quản lý • Nhóm $_cleanDeptName',
+      _ => 'Quản lý • Nhóm $_cleanDeptName',
     };
 
     final pendingCount = _pendingRequestsCount;

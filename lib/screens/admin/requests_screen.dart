@@ -545,8 +545,30 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
-      itemCount: items.length,
+      itemCount: items.length + (c.isManager && isReviewMode ? 1 : 0),
       itemBuilder: (context, index) {
+        if (index == items.length) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.lock_outline_rounded, size: 14, color: AppColors.textSecondary),
+                  SizedBox(width: 6),
+                  Text(
+                    'Đơn của chính bạn do quản trị viên duyệt',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         final request = items[index];
         return _buildRequestCard(request, isReviewMode: isReviewMode);
       },
@@ -607,7 +629,7 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${empDept != null && empDept.isNotEmpty ? '$empDept • ' : ''}${r.type}',
+                        '${empDept != null && empDept.isNotEmpty ? '$empDept • ' : ''}${r.type == "leave" ? "Nghỉ phép" : (r.type == "late" ? "Đi trễ" : (r.type == "forgot_checkout" ? "Giải trình" : r.type))}',
                         style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.teal,
@@ -669,6 +691,35 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
                 ),
               ),
             ),
+
+            if (r.type == 'forgot_checkout') ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, size: 16, color: Color(0xFFDC2626)),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Hệ thống chưa ghi nhận giờ ra',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFDC2626),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             // Dòng 4: Phản hồi của người duyệt (nếu có)
             if (r.reviewerNote.isNotEmpty) ...[

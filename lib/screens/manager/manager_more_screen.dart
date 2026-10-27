@@ -3,6 +3,7 @@ import '../../core/app_theme.dart';
 import '../../domain/app_controller.dart';
 import '../../widgets/app_widgets.dart';
 import '../admin/account_screen.dart';
+import '../../data/csv_export_service.dart';
 
 /// Màn hình "Thêm" dành cho Quản lý (Manager More Screen - Screen 13)
 class ManagerMoreScreen extends StatelessWidget {
@@ -22,6 +23,14 @@ class ManagerMoreScreen extends StatelessWidget {
   String get _managerDept => c.user?.department.isNotEmpty == true
       ? c.user!.department
       : (c.data.departments.isNotEmpty ? c.data.departments.first.name : 'Kinh doanh');
+
+  String get _cleanDeptName {
+    final dept = _managerDept.trim();
+    if (dept.toLowerCase().startsWith('phòng')) {
+      return dept.substring(5).trim();
+    }
+    return dept;
+  }
 
   String _typeLabel(String type) => switch (type) {
     'leave' => 'Nghỉ phép',
@@ -43,14 +52,26 @@ class ManagerMoreScreen extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2)),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(
                 children: [
                   const Icon(Icons.schedule_rounded, color: Color(0xFF0D9488), size: 24),
                   const SizedBox(width: 10),
-                  Text('Ca làm việc phòng $_managerDept', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.navy)),
+                  Expanded(
+                    child: Text(
+                      'Ca làm việc phòng $_cleanDeptName',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.navy),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -117,14 +138,26 @@ class ManagerMoreScreen extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2))),
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(2)),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(
                 children: [
                   const Icon(Icons.history_edu_rounded, color: Color(0xFF0284C7), size: 24),
                   const SizedBox(width: 10),
-                  Text('Lịch sử duyệt đơn phòng $_managerDept', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.navy)),
+                  Expanded(
+                    child: Text(
+                      'Lịch sử duyệt đơn phòng $_cleanDeptName',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.navy),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -193,7 +226,7 @@ class ManagerMoreScreen extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       children: [
         // ====================================================================
-        // THẺ HỒ SƠ QUẢN LÝ (Screen 13)
+        // THẺ HỒ SƠ QUẢN LÝ (Screen 13) - Nhấn vào để mở trang Tài khoản cá nhân
         // ====================================================================
         InkWell(
           onTap: () {
@@ -260,7 +293,7 @@ class ManagerMoreScreen extends StatelessWidget {
                           border: Border.all(color: Colors.deepPurple.withValues(alpha: 0.3)),
                         ),
                         child: Text(
-                          'Quản lý - Phòng $_managerDept',
+                          'Quản lý • Phòng $_cleanDeptName',
                           style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -288,7 +321,7 @@ class ManagerMoreScreen extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 10),
           child: Text(
-            'PHÒNG ${_managerDept.toUpperCase()}',
+            'PHÒNG ${_cleanDeptName.toUpperCase()}',
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -319,9 +352,20 @@ class ManagerMoreScreen extends StatelessWidget {
                 iconColor: const Color(0xFF8B5CF6),
                 title: 'Báo cáo nhóm',
                 subtitle: 'Xuất dữ liệu chấm công phòng ban',
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Xuất báo cáo công phòng $_managerDept (CSV)...'), behavior: SnackBarBehavior.floating),
+                onTap: () async {
+                  final deptEmpIds = c.data.employees
+                      .where((e) => e.department.toLowerCase() == _managerDept.toLowerCase())
+                      .map((e) => e.id)
+                      .toSet();
+                  final deptRecords = c.data.attendance
+                      .where((a) => deptEmpIds.contains(a.employeeId))
+                      .toList();
+                  await CsvExportService.exportTimesheet(
+                    context: context,
+                    controller: c,
+                    records: deptRecords,
+                    title: 'Phòng $_cleanDeptName',
+                    fileNamePrefix: 'BangCong_Phong_$_cleanDeptName',
                   );
                 },
               ),
@@ -339,7 +383,7 @@ class ManagerMoreScreen extends StatelessWidget {
         const SizedBox(height: 24),
 
         // ====================================================================
-        // PHẦN 2: CÁ NHÂN
+        // PHẦN 2: CÁ NHÂN (Đã loại bỏ nút Tài khoản cá nhân trùng lặp với thẻ đầu trang)
         // ====================================================================
         const Padding(
           padding: EdgeInsets.only(left: 4, bottom: 10),
@@ -370,24 +414,6 @@ class ManagerMoreScreen extends StatelessWidget {
                 onTap: () {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Đang bật tất cả thông báo điểm danh nhóm.'), behavior: SnackBarBehavior.floating),
-                  );
-                },
-              ),
-              const Divider(height: 1, indent: 56),
-              _buildMenuItem(
-                icon: Icons.person_outline_rounded,
-                iconColor: AppColors.teal,
-                title: 'Tài khoản cá nhân',
-                subtitle: 'Xem và cập nhật thông tin cá nhân, khuôn mặt',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AdminAccountScreen(
-                        controller: c,
-                        onLogout: onLogout,
-                      ),
-                    ),
                   );
                 },
               ),

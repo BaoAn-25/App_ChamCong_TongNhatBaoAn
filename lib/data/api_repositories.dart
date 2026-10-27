@@ -5,13 +5,34 @@ import 'api_client.dart';
 class OtpChallengeStart {
   final String challengeId;
   final String? email;
-  const OtpChallengeStart({required this.challengeId, this.email});
+  final Employee? user;
+  final String? trustToken;
+  final bool isDirectLogin;
+
+  const OtpChallengeStart({
+    required this.challengeId,
+    this.email,
+    this.user,
+    this.trustToken,
+    this.isDirectLogin = false,
+  });
 
   factory OtpChallengeStart.fromJson(Map<String, dynamic> res) {
+    if (res.containsKey('accessToken')) {
+      final userJson = res['user'] as Map<String, dynamic>?;
+      return OtpChallengeStart(
+        challengeId: '',
+        email: null,
+        user: userJson != null ? Employee.fromJson(userJson) : null,
+        trustToken: res['trustToken']?.toString(),
+        isDirectLogin: true,
+      );
+    }
     final email = res['email']?.toString().trim();
     return OtpChallengeStart(
-      challengeId: res['challengeId'].toString(),
+      challengeId: res['challengeId']?.toString() ?? '',
       email: (email == null || email.isEmpty) ? null : email,
+      isDirectLogin: false,
     );
   }
 }
@@ -39,26 +60,58 @@ class AuthService {
     return OtpChallengeStart.fromJson(res);
   }
 
-  Future<void> verifyEmail({
+  Future<Employee?> verifyEmail({
     required String challengeId,
     required String code,
+    String? deviceId,
   }) async {
-    await client.post(
+    final body = <String, dynamic>{
+      'challengeId': challengeId,
+      'code': code.trim(),
+    };
+    if (deviceId != null) body['deviceId'] = deviceId;
+    final res = await client.post(
       '/api/auth/verify-email',
       auth: false,
-      body: {'challengeId': challengeId, 'code': code.trim()},
+      body: body,
     );
+    if (res['tokens'] != null) {
+      final t = res['tokens'] as Map<String, dynamic>;
+      await client.setTokens(
+        access: t['accessToken'],
+        refresh: t['refreshToken'],
+      );
+      if (t['user'] != null) {
+        return Employee.fromJson(t['user'] as Map<String, dynamic>);
+      }
+    }
+    return null;
   }
 
   Future<OtpChallengeStart> login({
     required String username,
     required String password,
+    String? deviceId,
+    String? trustToken,
   }) async {
+    final body = <String, dynamic>{
+      'username': username.trim(),
+      'password': password,
+    };
+    if (deviceId != null) body['deviceId'] = deviceId;
+    if (trustToken != null) body['trustToken'] = trustToken;
+
     final res = await client.post(
       '/api/auth/login',
       auth: false,
-      body: {'username': username.trim(), 'password': password},
+      body: body,
     );
+    if (res.containsKey('accessToken')) {
+      await client.setTokens(
+        access: res['accessToken'],
+        refresh: res['refreshToken'],
+      );
+    }
     return OtpChallengeStart.fromJson(res);
   }
 
@@ -106,11 +159,17 @@ class AuthService {
   Future<Employee> verifyOtp({
     required String challengeId,
     required String code,
+    String? deviceId,
   }) async {
+    final body = <String, dynamic>{
+      'challengeId': challengeId,
+      'code': code.trim(),
+    };
+    if (deviceId != null) body['deviceId'] = deviceId;
     final res = await client.post(
       '/api/auth/verify-otp',
       auth: false,
-      body: {'challengeId': challengeId, 'code': code.trim()},
+      body: body,
     );
     await client.setTokens(
       access: res['accessToken'],

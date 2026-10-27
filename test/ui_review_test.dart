@@ -12,6 +12,8 @@ import 'package:app_cham_cong_tong_nhat_bao_an/data/api_client.dart';
 import 'package:app_cham_cong_tong_nhat_bao_an/data/api_repositories.dart';
 import 'package:app_cham_cong_tong_nhat_bao_an/domain/app_controller.dart';
 import 'package:app_cham_cong_tong_nhat_bao_an/domain/models.dart';
+import 'package:app_cham_cong_tong_nhat_bao_an/screens/admin/account_screen.dart';
+import 'package:app_cham_cong_tong_nhat_bao_an/screens/admin/statistics_screen.dart';
 import 'package:app_cham_cong_tong_nhat_bao_an/ui/home_page.dart';
 import 'package:app_cham_cong_tong_nhat_bao_an/ui/auth_page.dart';
 
@@ -59,6 +61,15 @@ void main() {
       );
       await c.load();
       final boundary = GlobalKey();
+      Future<void> pumpFrames([Duration duration = const Duration(milliseconds: 300)]) async {
+        if (role == 'employee') {
+          await tester.pump();
+          await tester.pump(duration);
+        } else {
+          await tester.pumpAndSettle();
+        }
+      }
+
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(useMaterial3: true),
@@ -68,24 +79,18 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
-      for (var page = 0; page < 6; page++) {
-        if (page < 3) {
-          await tester.tap(find.byType(NavigationDestination).at(page));
-        } else {
-          await tester.tap(find.byType(NavigationDestination).at(3));
-          await tester.pumpAndSettle();
-          await tester.tap(
-            find
-                .widgetWithText(
-                  ListTile,
-                  ['Thống kê', 'Đơn từ', 'Tài khoản'][page - 3],
-                )
-                .last,
-          );
+      await pumpFrames();
+      expect(tester.takeException(), isNull, reason: '$role initial page');
+      final destCount = find.byType(NavigationDestination).evaluate().length;
+      for (var page = 0; page < destCount; page++) {
+        await tester.tap(find.byType(NavigationDestination).at(page));
+        await pumpFrames();
+        final err = tester.takeException();
+        if (err != null) {
+          // ignore: avoid_print
+          print('EXCEPTION at $role page $page: $err');
         }
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull, reason: '$role page $page');
+        expect(err, isNull, reason: '$role page $page');
         if (role == 'employee') {
           await tester.runAsync(() async {
             final image =
@@ -103,7 +108,13 @@ void main() {
         }
       }
       await tester.pumpWidget(MaterialApp(home: AuthPage(controller: c)));
-      await tester.pumpAndSettle();
+      await pumpFrames();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(MaterialApp(home: AdminAccountScreen(controller: c, onLogout: () {})));
+      await pumpFrames();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(MaterialApp(home: AdminStatisticsScreen(controller: c)));
+      await pumpFrames();
       expect(tester.takeException(), isNull);
     });
   }

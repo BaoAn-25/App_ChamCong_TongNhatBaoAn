@@ -13,6 +13,7 @@ import 'face_camera_page.dart';
 import 'face_page.dart';
 import 'common.dart';
 import 'home_page.dart' show acquirePosition;
+import '../widgets/shared_navy_header.dart';
 
 class PunchPage extends StatefulWidget {
   final AppController controller;
@@ -835,37 +836,31 @@ class _PunchPageState extends State<PunchPage> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 28),
         children: [
-          // Header xanh Navy uốn cong chuẩn Mockup 3
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-            decoration: const BoxDecoration(
-              color: Color(0xFF0A2234),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
-            ),
-            child: Row(
+          // Header xanh Navy uốn cong đồng bộ dùng chung
+          SharedNavyHeader(
+            title: 'Chấm công',
+            controller: c,
+            bottomContent: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Chào buổi sáng',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF94A3B8),
-                        fontWeight: FontWeight.w500,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const GreetingText(),
+                      const SizedBox(height: 2),
+                      Text(
+                        userName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      userName,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 Container(
                   width: 44,
@@ -914,14 +909,18 @@ class _PunchPageState extends State<PunchPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            _formatVietnameseDate(_currentTime),
-                            style: const TextStyle(
-                              fontSize: 13.5,
-                              color: Color(0xFF64748B),
-                              fontWeight: FontWeight.w600,
+                          Expanded(
+                            child: Text(
+                              _formatVietnameseDate(_currentTime),
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
@@ -1323,21 +1322,22 @@ class _PunchPageState extends State<PunchPage> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           for (int i = 0; i < steps.length; i++) ...[
-            _buildStepItem(
-              number: i + 1,
-              title: steps[i]['label'] as String,
-              isDone: done.contains(steps[i]['index'] as int),
-              isActive: step == (steps[i]['index'] as int),
+            Flexible(
+              child: _buildStepItem(
+                number: i + 1,
+                title: steps[i]['label'] as String,
+                isDone: done.contains(steps[i]['index'] as int),
+                isActive: step == (steps[i]['index'] as int),
+              ),
             ),
             if (i < steps.length - 1)
-              Expanded(
-                child: Container(
-                  height: 1.5,
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  color: done.contains(steps[i]['index'] as int)
-                      ? const Color(0xFF006766)
-                      : const Color(0xFFCBD5E1),
-                ),
+              Container(
+                width: 14,
+                height: 1.5,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                color: done.contains(steps[i]['index'] as int)
+                    ? const Color(0xFF006766)
+                    : const Color(0xFFCBD5E1),
               ),
           ],
         ],
@@ -1385,13 +1385,17 @@ class _PunchPageState extends State<PunchPage> {
                   ),
                 ),
         ),
-        const SizedBox(width: 6),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: isDone || isActive ? FontWeight.w700 : FontWeight.w500,
-            color: isDone || isActive ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: isDone || isActive ? FontWeight.w700 : FontWeight.w500,
+              color: isDone || isActive ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+            ),
           ),
         ),
       ],

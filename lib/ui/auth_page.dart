@@ -1,3 +1,4 @@
+import 'package:local_auth/local_auth.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -95,8 +96,22 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void initState() {
     super.initState();
+    _loadRememberedUsername();
     _otpController.addListener(_onOtpChanged);
     _otpFocusNode.addListener(_onOtpChanged);
+  }
+
+  Future<void> _loadRememberedUsername() async {
+    try {
+      final last = await SessionStorage.getLastUsername();
+      if (last != null && last.isNotEmpty && mounted) {
+        setState(() {
+          if (_loginUsername.text.isEmpty) {
+            _loginUsername.text = last;
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -200,13 +215,18 @@ class _AuthPageState extends State<AuthPage> {
       }
 
       await widget.controller.loginWithRefreshToken(refresh);
-      final access = await SessionStorage.getAccessToken() ?? '';
+      final access = widget.controller.client.accessToken ?? await SessionStorage.getAccessToken() ?? '';
       await SessionStorage.saveSession(
         accessToken: access,
         refreshToken: refresh,
         expiresAt: DateTime.now().add(const Duration(days: 7)),
         rememberMe: true,
       );
+      if (widget.controller.user?.username != null) {
+        final deviceId = await SessionStorage.getDeviceId();
+        await SessionStorage.markDeviceTrusted(widget.controller.user!.username, deviceId);
+        await SessionStorage.saveLastUsername(widget.controller.user!.username);
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _error = _cleanErrorMessage(e));
@@ -218,7 +238,13 @@ class _AuthPageState extends State<AuthPage> {
 
   Future<void> _handleFaceLogin() async {
     if (_busy) return;
-    final username = _loginUsername.text.trim();
+    var username = _loginUsername.text.trim();
+    if (username.isEmpty) {
+      username = (await SessionStorage.getLastUsername()) ?? '';
+      if (username.isNotEmpty) {
+        _loginUsername.text = username;
+      }
+    }
     if (username.isEmpty) {
       setState(
         () => _error = 'Nhập tên đăng nhập trước khi quét khuôn mặt.',
@@ -229,6 +255,7 @@ class _AuthPageState extends State<AuthPage> {
       _busy = true;
       _error = null;
     });
+    if (!mounted) return;
     try {
       final capturedBase64 = await showFaceCamera<String>(
         context,
@@ -244,13 +271,16 @@ class _AuthPageState extends State<AuthPage> {
       );
 
       final refresh = widget.controller.client.refreshToken ?? '';
-      final access = await SessionStorage.getAccessToken() ?? '';
+      final access = widget.controller.client.accessToken ?? await SessionStorage.getAccessToken() ?? '';
       await SessionStorage.saveSession(
         accessToken: access,
         refreshToken: refresh,
         expiresAt: DateTime.now().add(const Duration(days: 7)),
         rememberMe: true,
       );
+      final deviceId = await SessionStorage.getDeviceId();
+      await SessionStorage.markDeviceTrusted(username, deviceId);
+      await SessionStorage.saveLastUsername(username);
     } catch (e) {
       if (mounted) setState(() => _error = _cleanErrorMessage(e));
     } finally {
@@ -280,27 +310,36 @@ class _AuthPageState extends State<AuthPage> {
     try {
       final deviceId = await SessionStorage.getDeviceId();
       final isTrusted = await SessionStorage.isDeviceTrusted(uname, deviceId);
+      final trustToken = await SessionStorage.getTrustToken(uname, deviceId);
 
-      if (isTrusted && widget.controller.client.hasTokens) {
-        try {
-          final refresh = widget.controller.client.refreshToken;
-          if (refresh != null) {
-            await widget.controller.loginWithRefreshToken(refresh);
-            if (widget.controller.user != null) {
-              final access = await SessionStorage.getAccessToken() ?? '';
-              await SessionStorage.saveSession(
-                accessToken: access,
-                refreshToken: refresh,
-                expiresAt: DateTime.now().add(const Duration(days: 7)),
-                rememberMe: true,
-              );
-              return;
-            }
-          }
-        } catch (_) {}
+      // Gửi đăng nhập kèm deviceId và trustToken nếu là máy quen thuộc
+      await widget.controller.beginLogin(
+        uname,
+        pass,
+        deviceId: deviceId,
+        trustToken: isTrusted ? trustToken : null,
+      );
+      TextInput.finishAutofillContext(shouldSave: true);
+
+      // Nếu hệ thống nhận diện máy quen thuộc và cho đăng nhập trực tiếp (không cần OTP)
+      if (widget.controller.user != null) {
+        final access = widget.controller.client.accessToken ?? await SessionStorage.getAccessToken() ?? '';
+        final refresh = widget.controller.client.refreshToken ?? await SessionStorage.getRefreshToken() ?? '';
+        await SessionStorage.saveSession(
+          accessToken: access,
+          refreshToken: refresh,
+          expiresAt: DateTime.now().add(const Duration(days: 7)),
+          rememberMe: _rememberMe,
+        );
+        await SessionStorage.markDeviceTrusted(uname, deviceId);
+        await SessionStorage.saveLastUsername(uname);
+        if (mounted) {
+          _checkAndPromptBiometrics();
+        }
+        return;
       }
 
-      await widget.controller.beginLogin(uname, pass);
+      // Nếu là thiết bị mới hoặc chưa lưu trustToken -> chuyển sang màn hình nhập OTP
       if (mounted) {
         setState(() {
           _otpStep = true;
@@ -361,6 +400,7 @@ class _AuthPageState extends State<AuthPage> {
         role: 'employee',
       );
       await widget.controller.register(newEmp, password);
+      TextInput.finishAutofillContext(shouldSave: true);
 
       if (mounted) {
         setState(() {
@@ -391,6 +431,7 @@ class _AuthPageState extends State<AuthPage> {
       return;
     }
 
+    _countdownTimer?.cancel();
     setState(() {
       _busy = true;
       _error = null;
@@ -398,12 +439,33 @@ class _AuthPageState extends State<AuthPage> {
 
     try {
       if (_otpPurpose == 'register') {
-        await widget.controller.verifyEmail(code);
+        final deviceId = await SessionStorage.getDeviceId();
+        await widget.controller.verifyEmail(code, deviceId: deviceId);
+        final uname = _targetUsername ?? _regUsername.text.trim();
+        await SessionStorage.markDeviceTrusted(uname, deviceId);
+        await SessionStorage.saveLastUsername(uname);
+
+        // Nếu backend đã tự động cấp token đăng nhập thành công sau khi xác minh email
+        if (widget.controller.user != null) {
+          final access = widget.controller.client.accessToken ?? await SessionStorage.getAccessToken() ?? '';
+          final refresh = widget.controller.client.refreshToken ?? await SessionStorage.getRefreshToken() ?? '';
+          await SessionStorage.saveSession(
+            accessToken: access,
+            refreshToken: refresh,
+            expiresAt: DateTime.now().add(const Duration(days: 7)),
+            rememberMe: true,
+          );
+          if (mounted) {
+            _checkAndPromptBiometrics();
+          }
+          return;
+        }
+
         if (mounted) {
           setState(() {
             _otpStep = false;
             _activeTab = 0;
-            _loginUsername.text = _targetUsername ?? '';
+            _loginUsername.text = uname;
             _loginPassword.clear();
             _otpController.clear();
             _error = null;
@@ -443,20 +505,25 @@ class _AuthPageState extends State<AuthPage> {
           );
         }
       } else {
-        await widget.controller.verifyOtp(code);
+        final deviceId = await SessionStorage.getDeviceId();
+        await widget.controller.verifyOtp(code, deviceId: deviceId);
 
         final uname = _targetUsername ?? _loginUsername.text.trim();
-        final deviceId = await SessionStorage.getDeviceId();
         await SessionStorage.markDeviceTrusted(uname, deviceId);
+        await SessionStorage.saveLastUsername(uname);
 
-        final refresh = widget.controller.client.refreshToken ?? '';
-        final access = await SessionStorage.getAccessToken() ?? '';
+        final access = widget.controller.client.accessToken ?? await SessionStorage.getAccessToken() ?? '';
+        final refresh = widget.controller.client.refreshToken ?? await SessionStorage.getRefreshToken() ?? '';
         await SessionStorage.saveSession(
           accessToken: access,
           refreshToken: refresh,
           expiresAt: DateTime.now().add(const Duration(days: 7)),
           rememberMe: _rememberMe,
         );
+
+        if (mounted) {
+          _checkAndPromptBiometrics();
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -537,6 +604,7 @@ class _AuthPageState extends State<AuthPage> {
 
     try {
       await widget.controller.requestPasswordReset(identifier);
+      TextInput.finishAutofillContext(shouldSave: false);
       if (mounted) {
         setState(() {
           _forgotStep = false;
@@ -565,6 +633,58 @@ class _AuthPageState extends State<AuthPage> {
   // ============================================================================
   // GIAO DIỆN CHÍNH
   // ============================================================================
+  Future<void> _checkAndPromptBiometrics() async {
+    try {
+      final supported = await BiometricLoginHelper.isDeviceSupported;
+      final enrolled = await BiometricLoginHelper.isEnabled;
+      if (supported && !enrolled && mounted) {
+        final refresh = widget.controller.client.refreshToken;
+        if (refresh != null) {
+          final types = await BiometricLoginHelper.availableBiometrics;
+          final isFace = types.contains(BiometricType.face);
+          final label = isFace ? 'Face ID / Khuôn mặt' : 'Vân tay';
+          if (!mounted) return;
+          final shouldEnroll = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  Icon(
+                    isFace ? Icons.face_rounded : Icons.fingerprint_rounded,
+                    color: const Color(0xFF0F7C8A),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('Kích hoạt $label?'),
+                ],
+              ),
+              content: Text(
+                'Thiết bị hỗ trợ $label. Bạn có muốn kích hoạt để lần sau chỉ cần chạm/quét là vào ngay, không cần mật khẩu hay OTP?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Để sau', style: TextStyle(color: Color(0xFF64748B))),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0F7C8A)),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Kích hoạt ngay'),
+                ),
+              ],
+            ),
+          );
+          if (shouldEnroll == true) {
+            final authed = await BiometricLoginHelper.authenticate();
+            if (authed) {
+              await BiometricLoginHelper.enroll(refresh);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -829,7 +949,8 @@ class _AuthPageState extends State<AuthPage> {
   // FORM ĐĂNG NHẬP (MOCKUP 1)
   // ============================================================================
   Widget _buildLoginForm() {
-    return Column(
+    return AutofillGroup(
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildInputField(
@@ -1014,7 +1135,8 @@ class _AuthPageState extends State<AuthPage> {
           ],
         ),
       ],
-    );
+    ),
+  );
   }
 
   // Nút sinh trắc học bo tròn ngang chuẩn Mockup 1
@@ -1033,20 +1155,28 @@ class _AuthPageState extends State<AuthPage> {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 20, color: AuthColors.primary),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w700,
-                color: AuthColors.textPrimary,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: AuthColors.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AuthColors.textPrimary,
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1056,7 +1186,8 @@ class _AuthPageState extends State<AuthPage> {
   // FORM ĐĂNG KÝ
   // ============================================================================
   Widget _buildRegisterForm() {
-    return Column(
+    return AutofillGroup(
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildInputField(
@@ -1183,7 +1314,8 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
       ],
-    );
+    ),
+  );
   }
 
   // ============================================================================
@@ -1435,60 +1567,17 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  // 6 ô OTP riêng biệt theo Mockup - không bị Android Autofill vẽ đè overlay xám
+  // 6 ô OTP riêng biệt theo Mockup chuẩn, không bị overlay xám hay Autofill che khuất
   Widget _buildOtpBoxes() {
     final text = _otpController.text;
     final hasFocus = _otpFocusNode.hasFocus;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        _otpFocusNode.requestFocus();
-      },
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // TextField ẩn kích thước 1x1 trong suốt, không bị Android Autofill vẽ dải xám đè lên
-          Opacity(
-            opacity: 0.0,
-            child: SizedBox(
-              width: 1,
-              height: 1,
-              child: TextField(
-                controller: _otpController,
-                focusNode: _otpFocusNode,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                autofocus: true,
-                showCursor: false,
-                enableInteractiveSelection: false,
-                enableSuggestions: false,
-                autocorrect: false,
-                style: const TextStyle(color: Colors.transparent, fontSize: 1),
-                cursorColor: Colors.transparent,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  counterText: '',
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
-                  fillColor: Colors.transparent,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                onChanged: (val) {
-                  _clearErrors();
-                  setState(() {});
-                  if (val.length == 6 && _otpPurpose != 'reset-password') {
-                    _handleVerifyOtp();
-                  }
-                },
-              ),
-            ),
-          ),
-
-          // Hàng 6 ô vuông OTP rõ ràng, sạch đẹp 100%
-          Row(
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // Hàng 6 ô vuông OTP rõ ràng, sạch đẹp 100%
+        IgnorePointer(
+          child: Row(
             children: List.generate(6, (index) {
               final hasChar = index < text.length;
               final char = hasChar ? text[index] : '';
@@ -1568,8 +1657,47 @@ class _AuthPageState extends State<AuthPage> {
               );
             }),
           ),
-        ],
-      ),
+        ),
+
+        // TextField trong suốt bao phủ toàn bộ vùng 6 ô để hứng thao tác bấm & bàn phím số
+        Positioned.fill(
+          child: Opacity(
+            opacity: 0.0,
+            child: TextField(
+              controller: _otpController,
+              focusNode: _otpFocusNode,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              autofocus: true,
+              showCursor: false,
+              enableInteractiveSelection: false,
+              enableSuggestions: false,
+              autocorrect: false,
+              enableIMEPersonalizedLearning: false,
+              autofillHints: null,
+              style: const TextStyle(color: Colors.transparent, fontSize: 1),
+              cursorColor: Colors.transparent,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                counterText: '',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                fillColor: Colors.transparent,
+                contentPadding: EdgeInsets.zero,
+              ),
+              onChanged: (val) {
+                _clearErrors();
+                setState(() {});
+                if (val.length == 6 && _otpPurpose != 'reset-password') {
+                  _handleVerifyOtp();
+                }
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 

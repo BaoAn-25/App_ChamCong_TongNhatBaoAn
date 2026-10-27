@@ -18,10 +18,12 @@ import 'employee_history_screen.dart';
 /// 7. Trạng thái rỗng, trạng thái lỗi có nút thử lại.
 class AttendanceMapScreen extends StatefulWidget {
   final AppController controller;
+  final String? initialDepartmentFilter;
 
   const AttendanceMapScreen({
     super.key,
     required this.controller,
+    this.initialDepartmentFilter,
   });
 
   @override
@@ -46,6 +48,7 @@ class _AttendanceMapScreenState extends State<AttendanceMapScreen> {
     super.initState();
     final now = DateTime.now();
     _selectedDate = DateTime(now.year, now.month, now.day);
+    _selectedDeptFilter = widget.initialDepartmentFilter;
   }
 
   // Danh sách chấm công trong ngày được chọn

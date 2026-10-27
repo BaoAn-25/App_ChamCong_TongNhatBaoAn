@@ -834,48 +834,84 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
   Widget build(BuildContext context) {
     final user = c.user;
     if (user == null) {
-      return const Center(child: Text('Chưa có thông tin tài khoản'));
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          backgroundColor: AppColors.navy,
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          title: const Text(
+            'Tài khoản',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+          ),
+        ),
+        body: const Center(child: Text('Chưa có thông tin tài khoản')),
+      );
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(AppTheme.space16),
-      children: [
-        // ====================================================================
-        // 7. HEADER HỒ SƠ
-        // ====================================================================
-        _buildProfileHeaderCard(user),
-        const SizedBox(height: 16),
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.navy,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: const Text(
+          'Tài khoản',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: false,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(AppTheme.space16),
+        children: [
+          // ====================================================================
+          // 7. HEADER HỒ SƠ
+          // ====================================================================
+          _buildProfileHeaderCard(user),
+          const SizedBox(height: 16),
 
-        // ====================================================================
-        // 8. THẺ KHUÔN MẶT
-        // ====================================================================
-        _buildFaceCard(),
-        const SizedBox(height: 16),
+          // ====================================================================
+          // 8. THẺ KHUÔN MẶT
+          // ====================================================================
+          _buildFaceCard(),
+          const SizedBox(height: 16),
 
-        // ====================================================================
-        // 9. THẺ SINH TRẮC HỌC
-        // ====================================================================
-        _buildBiometricCard(),
-        const SizedBox(height: 16),
+          // ====================================================================
+          // 9. THẺ SINH TRẮC HỌC
+          // ====================================================================
+          _buildBiometricCard(),
+          const SizedBox(height: 16),
 
-        // ====================================================================
-        // 10. THẺ VỊ TRÍ HIỆN TẠI
-        // ====================================================================
-        _buildLocationCard(),
-        const SizedBox(height: 16),
+          // ====================================================================
+          // 10. THẺ VỊ TRÍ HIỆN TẠI
+          // ====================================================================
+          _buildLocationCard(),
+          const SizedBox(height: 16),
 
-        // ====================================================================
-        // 11. VỀ ỨNG DỤNG (GẬP MẶC ĐỊNH - ExpansionTile)
-        // ====================================================================
-        _buildAboutAppTile(),
-        const SizedBox(height: 28),
+          // ====================================================================
+          // 11. VỀ ỨNG DỤNG (GẬP MẶC ĐỊNH - ExpansionTile)
+          // ====================================================================
+          _buildAboutAppTile(),
+          const SizedBox(height: 28),
 
-        // ====================================================================
-        // 12. NÚT ĐĂNG XUẤT CUỐI TRANG (#FDECEC, chữ #D64545)
-        // ====================================================================
-        _buildLogoutButton(),
-        const SizedBox(height: 32),
-      ],
+          // ====================================================================
+          // 12. NÚT ĐĂNG XUẤT CUỐI TRANG (#FDECEC, chữ #D64545)
+          // ====================================================================
+          _buildLogoutButton(),
+          const SizedBox(height: 32),
+        ],
+      ),
     );
   }
 
@@ -984,10 +1020,24 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
 
           SizedBox(
             width: double.infinity,
-            child: SecondaryButton(
-              title: 'Chỉnh sửa hồ sơ',
-              icon: Icons.edit_outlined,
+            height: 48,
+            child: OutlinedButton.icon(
               onPressed: _openEditProfileDialog,
+              icon: const Icon(Icons.edit_outlined, size: 18, color: AppColors.teal),
+              label: const Text(
+                'Chỉnh sửa hồ sơ',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.teal,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: AppColors.teal.withValues(alpha: 0.05),
+                side: BorderSide(color: AppColors.teal.withValues(alpha: 0.35), width: 1.2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
             ),
           ),
         ],
@@ -1088,18 +1138,63 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
           Row(
             children: [
               Expanded(
-                child: PrimaryButton(
-                  title: isEnrolled ? 'Đăng ký lại mẫu' : 'Đăng ký khuôn mặt',
-                  icon: Icons.add_a_photo_outlined,
-                  isLoading: _faceBusy,
-                  onPressed: () => _changeFaceEnrollment(remove: false),
+                child: Container(
+                  height: 48,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF0F7C8A), Color(0xFF14B8A6)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF0F7C8A).withValues(alpha: 0.28),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton.icon(
+                    onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: false),
+                    icon: _faceBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : Icon(isEnrolled ? Icons.photo_camera_front_outlined : Icons.add_a_photo_outlined, size: 18, color: Colors.white),
+                    label: Text(
+                      isEnrolled ? 'Đăng ký lại mẫu' : 'Đăng ký khuôn mặt',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
                 ),
               ),
               if (isEnrolled) ...[
                 const SizedBox(width: 10),
-                TextButton(
-                  onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: true),
-                  child: const Text('Xóa mẫu', style: TextStyle(color: AppColors.error, fontSize: 13)),
+                SizedBox(
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    onPressed: _faceBusy ? null : () => _changeFaceEnrollment(remove: true),
+                    icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 18),
+                    label: const Text(
+                      'Xóa mẫu',
+                      style: TextStyle(color: AppColors.error, fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: AppColors.errorBg,
+                      side: const BorderSide(color: Color(0xFFFECACA), width: 1.2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -1217,13 +1312,43 @@ class _AdminAccountScreenState extends State<AdminAccountScreen> {
           ),
           const SizedBox(height: 14),
 
-          SizedBox(
+          Container(
             width: double.infinity,
-            child: PrimaryButton(
-              title: 'Xác định vị trí hiện tại',
-              icon: Icons.near_me_outlined,
-              isLoading: _isLocating,
-              onPressed: _determineAndShowCurrentLocation,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0F7C8A), Color(0xFF14B8A6)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF0F7C8A).withValues(alpha: 0.28),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ElevatedButton.icon(
+              onPressed: _isLocating ? null : _determineAndShowCurrentLocation,
+              icon: _isLocating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.my_location_rounded, size: 18, color: Colors.white),
+              label: const Text(
+                'Xác định vị trí hiện tại',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.white,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
             ),
           ),
         ],

@@ -8,16 +8,14 @@ import 'dashboard_screen.dart';
 import 'manage_screen.dart';
 import 'timesheet_screen.dart';
 import 'requests_screen.dart';
-import 'statistics_screen.dart';
-import 'account_screen.dart';
+import 'admin_more_screen.dart';
 
-/// Khung điều hướng Admin (Admin Shell) theo chuẩn thiết kế mới:
-/// - NavigationBar 5 tab nhãn CỐ ĐỊNH:
+/// Khung điều hướng Quản trị viên (Admin Shell) theo chuẩn thiết kế mới (Screens 6–11):
+/// - NavigationBar 5 tab cố định:
 ///   [0: Tổng quan, 1: Nhân sự, 2: Bảng công, 3: Đơn từ (có Badge), 4: Thêm]
-/// - Tab "Thêm" mở bottom sheet: Thống kê, Tài khoản, Đăng xuất
-/// - Khi đang ở Thống kê (index 4) hoặc Tài khoản (index 5), tab "Thêm" vẫn sáng (selected)
-/// - AppHeader tích hợp: Tiêu đề + Phụ đề + Chip vai trò nhỏ gọn + Thời gian cập nhật 12px
-/// - RefreshIndicator kéo vuốt làm mới dữ liệu
+/// - Tab 4 "Thêm" là màn hình AdminMoreScreen (Screen 10)
+/// - AppHeader tích hợp: Tiêu đề + Phụ đề + Chip vai trò Admin + Thời gian đồng bộ
+/// - Kéo vuốt làm mới dữ liệu
 class AdminShell extends StatefulWidget {
   final AppController controller;
   final int initialPage;
@@ -39,14 +37,12 @@ class AdminShell extends StatefulWidget {
 class _AdminShellState extends State<AdminShell> {
   late int _currentPage;
 
-  // Danh sách tiêu đề cho 6 màn hình
   static const List<String> _pageTitles = [
     'Tổng quan',
-    'Quản lý nhân sự',
+    'Nhân sự',
     'Bảng công',
     'Quản lý đơn từ',
-    'Thống kê & Báo cáo',
-    'Thông tin tài khoản',
+    'Thêm',
   ];
 
   @override
@@ -66,38 +62,8 @@ class _AdminShellState extends State<AdminShell> {
     }
   }
 
-  // Chuyển đổi giữa index thực tế (0..5) và index hiển thị trên NavigationBar (0..4)
-  int get _navBarIndex {
-    if (_currentPage >= 0 && _currentPage <= 3) {
-      return _currentPage;
-    }
-    // Trang 4 (Thống kê) và Trang 5 (Tài khoản) đều thuộc tab 4 "Thêm"
-    return 4;
-  }
-
   void _onNavDestinationSelected(int index) {
-    if (index < 4) {
-      setState(() => _currentPage = index);
-    } else {
-      _showMoreBottomSheet();
-    }
-  }
-
-  /// Mở Bottom Sheet cho tab "Thêm"
-  Future<void> _showMoreBottomSheet() async {
-    final result = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => _MoreOptionsSheet(
-        currentPage: _currentPage,
-        onLogout: _handleLogout,
-      ),
-    );
-
-    if (result != null && mounted) {
-      setState(() => _currentPage = result);
-    }
+    setState(() => _currentPage = index);
   }
 
   /// Xử lý đăng xuất an toàn
@@ -133,21 +99,37 @@ class _AdminShellState extends State<AdminShell> {
     }
   }
 
+  String _formatTodayVietnamese() {
+    final now = DateTime.now();
+    const days = [
+      'Chủ nhật',
+      'Thứ Hai',
+      'Thứ Ba',
+      'Thứ Tư',
+      'Thứ Năm',
+      'Thứ Sáu',
+      'Thứ Bảy',
+    ];
+    final weekday = days[now.weekday % 7];
+    return '$weekday, ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = _currentPage < _pageTitles.length
         ? _pageTitles[_currentPage]
         : 'Quản trị';
 
-    final roleName = c.isAdmin
-        ? 'Admin'
-        : (c.user?.role == 'manager' ? 'Quản lý' : 'Nhân viên');
+    final totalEmployees = c.data.employees.length;
 
-    final roleIcon = c.isAdmin
-        ? Icons.shield_outlined
-        : (c.user?.role == 'manager'
-            ? Icons.supervisor_account_outlined
-            : Icons.badge_outlined);
+    final String subtitle = switch (_currentPage) {
+      0 => '${_formatTodayVietnamese()} • $totalEmployees nhân viên',
+      1 => 'Tổng số $totalEmployees nhân sự',
+      2 => 'Theo dõi và xuất dữ liệu công',
+      3 => 'Duyệt đơn nghỉ phép, bổ sung công',
+      4 => 'Quản trị hệ thống & Cài đặt',
+      _ => 'Chấm công • Tống Nhật Bảo An',
+    };
 
     final pendingCount = _pendingRequestsCount;
 
@@ -168,12 +150,10 @@ class _AdminShellState extends State<AdminShell> {
             3 => AdminRequestsScreen(
                 controller: c,
               ),
-            4 => AdminStatisticsScreen(
-                controller: c,
-              ),
-            5 => AdminAccountScreen(
+            4 => AdminMoreScreen(
                 controller: c,
                 onLogout: _handleLogout,
+                onNavigateTab: (idx) => setState(() => _currentPage = idx),
               ),
             _ => Center(
                 child: Text(
@@ -197,12 +177,12 @@ class _AdminShellState extends State<AdminShell> {
                 valueColor: AlwaysStoppedAnimation<Color>(AppColors.tealLight),
               ),
 
-            // Header gradient chéo navy -> teal, đáy bo 28, 2 vòng tròn trang trí
+            // Header gradient chéo navy -> teal, đáy bo 28, huy hiệu Quản trị
             AppHeader(
               title: title,
-              subtitle: 'Chấm công • Nhóm 09',
-              roleName: roleName,
-              roleIcon: roleIcon,
+              subtitle: subtitle,
+              roleName: 'Quản trị',
+              roleIcon: Icons.shield_outlined,
               lastUpdated: c.lastSyncedAt,
               onRefresh: c.isSyncing ? null : c.syncAll,
             ),
@@ -238,14 +218,14 @@ class _AdminShellState extends State<AdminShell> {
         ),
       ),
 
-      // NavigationBar 5 tab cố định cao 68, bóng nhẹ phía trên, chỉ báo viên thuốc teal nhạt
+      // NavigationBar 5 tab cố định: [Tổng quan, Nhân sự, Bảng công, Đơn từ, Thêm]
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
           boxShadow: AppTheme.navBarShadow,
         ),
         child: NavigationBar(
-          selectedIndex: _navBarIndex,
+          selectedIndex: _currentPage.clamp(0, 4),
           onDestinationSelected: _onNavDestinationSelected,
           destinations: [
             const NavigationDestination(
@@ -287,185 +267,6 @@ class _AdminShellState extends State<AdminShell> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Bottom Sheet danh mục "Thêm"
-class _MoreOptionsSheet extends StatelessWidget {
-  final int currentPage;
-  final VoidCallback onLogout;
-
-  const _MoreOptionsSheet({
-    required this.currentPage,
-    required this.onLogout,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Thanh gạt (Drag handle)
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Text(
-                'Tính năng mở rộng',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Thống kê
-            _buildOptionItem(
-              context: context,
-              index: 4,
-              icon: Icons.bar_chart_rounded,
-              title: 'Thống kê & Báo cáo',
-              subtitle: 'Biểu đồ chấm công, tỷ lệ chuyên cần',
-              isSelected: currentPage == 4,
-              onTap: () => Navigator.pop(context, 4),
-            ),
-
-            // Tài khoản
-            _buildOptionItem(
-              context: context,
-              index: 5,
-              icon: Icons.person_outline_rounded,
-              title: 'Tài khoản cá nhân',
-              subtitle: 'Xem & cập nhật thông tin hồ sơ',
-              isSelected: currentPage == 5,
-              onTap: () => Navigator.pop(context, 5),
-            ),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Divider(color: AppColors.border, height: 1),
-            ),
-
-            // Đăng xuất
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.errorBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.logout_rounded,
-                  color: AppColors.error,
-                  size: 22,
-                ),
-              ),
-              title: const Text(
-                'Đăng xuất tài khoản',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                  color: AppColors.error,
-                ),
-              ),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                color: AppColors.error,
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                onLogout();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOptionItem({
-    required BuildContext context,
-    required int index,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: isSelected ? AppColors.teal.withValues(alpha: 0.08) : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        border: isSelected
-            ? Border.all(color: AppColors.teal.withValues(alpha: 0.3), width: 1.2)
-            : null,
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppColors.teal
-                : AppColors.navy.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
-            icon,
-            color: isSelected ? Colors.white : AppColors.textPrimary,
-            size: 22,
-          ),
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-            fontSize: 15,
-            color: isSelected ? AppColors.teal : AppColors.textPrimary,
-          ),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        trailing: Icon(
-          Icons.chevron_right_rounded,
-          color: isSelected ? AppColors.teal : AppColors.textSecondary,
-        ),
-        onTap: onTap,
       ),
     );
   }

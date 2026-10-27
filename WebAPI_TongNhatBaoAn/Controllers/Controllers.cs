@@ -63,7 +63,8 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         if (emp == null) return Fail(error!, 400);
         emp.EmailVerified = true;
         await db.SaveChangesAsync();
-        return Ok(new { verified = true });
+        var tokenResp = await IssueAsync(emp, r.DeviceId);
+        return Ok(new { verified = true, tokens = tokenResp });
     }
 
     [HttpPost("login")]
@@ -74,6 +75,12 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         var passwordOk = BCrypt.Net.BCrypt.Verify(r.Password ?? "", emp?.PasswordHash ?? DummyHash);
         if (emp == null || !passwordOk || !emp.Active || !emp.EmailVerified)
             return Fail("Tên đăng nhập hoặc mật khẩu không đúng, tài khoản bị khóa hoặc chưa xác minh email.", 401);
+
+        // Kiểm tra thiết bị tin cậy: nếu đúng máy quen thuộc đã từng xác thực OTP -> Bỏ qua OTP, cấp token vào thẳng
+        if (!string.IsNullOrEmpty(r.DeviceId) && tokens.VerifyTrustToken(emp, r.DeviceId, r.TrustToken))
+        {
+            return Ok(await IssueAsync(emp, r.DeviceId));
+        }
 
         var (challenge, code) = otp.Create(emp.Id, Login);
         await db.SaveChangesAsync();
@@ -93,7 +100,7 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         var (emp, error) = await otp.VerifyAsync(r.ChallengeId, r.Code, Login);
         if (emp == null) return Fail(error!, 401);
         if (!emp.Active || !emp.EmailVerified) return Fail("Tài khoản bị khóa hoặc chưa xác minh email.", 403);
-        return Ok(await IssueAsync(emp));
+        return Ok(await IssueAsync(emp, r.DeviceId));
     }
 
     [HttpPost("forgot-password")]
@@ -157,12 +164,13 @@ public class AuthController(AppDb db, TokenService tokens, OtpService otp) : Api
         return NoContent();
     }
 
-    private async Task<TokenResponse> IssueAsync(Employee emp)
+    private async Task<TokenResponse> IssueAsync(Employee emp, string? deviceId = null)
     {
         var (access, expires) = tokens.CreateAccess(emp);
         var refresh = tokens.CreateRefresh(emp);
+        string? trustToken = !string.IsNullOrEmpty(deviceId) ? tokens.CreateTrustToken(emp, deviceId) : null;
         await db.SaveChangesAsync();
-        return new TokenResponse(access, expires, refresh, EmployeeDto.From(emp));
+        return new TokenResponse(access, expires, refresh, EmployeeDto.From(emp), trustToken);
     }
 }
 

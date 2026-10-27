@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import '../../app_config.dart';
 import '../../core/app_theme.dart';
@@ -6,6 +7,7 @@ import '../../domain/app_controller.dart';
 import '../../domain/models.dart';
 import '../../widgets/app_widgets.dart';
 import 'employee_history_screen.dart';
+import 'admin_management_dialogs.dart';
 
 /// Màn hình Quản lý Nhân sự dành cho Admin:
 /// 5. Khối Văn phòng chấm công: Tên, bán kính, tọa độ rút gọn; 2 nút Cấu hình & Dùng vị trí hiện tại bằng nhau; nút QR chỉ hiện khi requireQr = true; form cấu hình là Bottom Sheet.
@@ -119,15 +121,7 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
 
   /// Mở Bottom Sheet cấu hình văn phòng
   void _openOfficeConfigSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _OfficeConfigSheet(
-        controller: c,
-        onSaved: () => setState(() {}),
-      ),
-    );
+    OfficeConfigSheet.show(context, c, onSaved: () => setState(() {}));
   }
 
   /// Mở Bottom Sheet thêm hoặc chỉnh sửa nhân viên
@@ -262,14 +256,18 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Danh sách tài khoản (${employees.length})',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                      Flexible(
+                        child: Text(
+                          'Danh sách tài khoản (${employees.length})',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
                       Text(
                         'Tổng: ${c.data.employees.length}',
                         style: const TextStyle(
@@ -440,19 +438,21 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
   Widget _buildWorkflowStepsCard() {
     return AppCard(
       color: AppColors.input,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildStepItem('1', 'Văn phòng', Icons.location_on_outlined, true),
-          Container(width: 24, height: 1, color: AppColors.border),
-          _buildStepItem('2', 'Ca làm', Icons.schedule_rounded, c.data.shifts.isNotEmpty),
-          Container(width: 24, height: 1, color: AppColors.border),
-          _buildStepItem(
-            '3',
-            'Phân ca',
-            Icons.people_outline_rounded,
-            c.data.employees.any((e) => e.shiftId != null),
+          Flexible(child: _buildStepItem('1', 'Văn phòng', Icons.location_on_outlined, true)),
+          Container(width: 8, height: 1, color: AppColors.border),
+          Flexible(child: _buildStepItem('2', 'Ca làm', Icons.schedule_rounded, c.data.shifts.isNotEmpty)),
+          Container(width: 8, height: 1, color: AppColors.border),
+          Flexible(
+            child: _buildStepItem(
+              '3',
+              'Phân ca',
+              Icons.people_outline_rounded,
+              c.data.employees.any((e) => e.shiftId != null),
+            ),
           ),
         ],
       ),
@@ -464,32 +464,35 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 24,
-          height: 24,
+          width: 20,
+          height: 20,
           decoration: BoxDecoration(
             color: done ? AppColors.teal : AppColors.border,
             shape: BoxShape.circle,
           ),
           child: Center(
             child: done
-                ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+                ? const Icon(Icons.check_rounded, size: 12, color: Colors.white)
                 : Text(
                     number,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 10,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textSecondary,
                     ),
                   ),
           ),
         ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: done ? FontWeight.w700 : FontWeight.w500,
-            color: done ? AppColors.textPrimary : AppColors.textSecondary,
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: done ? FontWeight.w700 : FontWeight.w500,
+              color: done ? AppColors.textPrimary : AppColors.textSecondary,
+            ),
           ),
         ),
       ],
@@ -501,19 +504,53 @@ class _AdminManageScreenState extends State<AdminManageScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Ô tìm kiếm
-        TextField(
-          onChanged: (val) => setState(() => _searchQuery = val),
-          decoration: InputDecoration(
-            hintText: 'Tìm theo tên, tài khoản, phòng ban...',
-            prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
-            suffixIcon: _searchQuery.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear_rounded, size: 18),
-                    onPressed: () => setState(() => _searchQuery = ''),
-                  )
-                : null,
-          ),
+        // Hàng ô tìm kiếm + nút Quản lý Phòng ban
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                onChanged: (val) => setState(() => _searchQuery = val),
+                decoration: InputDecoration(
+                  hintText: 'Tìm theo tên, tài khoản, phòng ban...',
+                  prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          onPressed: () => setState(() => _searchQuery = ''),
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () => DepartmentManagementSheet.show(context, c),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: AppTheme.cardShadow,
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.apartment_rounded, size: 18, color: AppColors.teal),
+                    SizedBox(width: 4),
+                    Text(
+                      'Phòng ban',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.teal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 10),
 
@@ -1173,26 +1210,45 @@ class _EmployeeFormSheetState extends State<_EmployeeFormSheet> {
 // ============================================================================
 // FORM CẤU HÌNH VĂN PHÒNG (BOTTOM SHEET)
 // ============================================================================
-class _OfficeConfigSheet extends StatefulWidget {
+class OfficeConfigSheet extends StatefulWidget {
   final AppController controller;
   final VoidCallback onSaved;
 
-  const _OfficeConfigSheet({
+  const OfficeConfigSheet({
+    super.key,
     required this.controller,
     required this.onSaved,
   });
 
+  static Future<void> show(
+    BuildContext context,
+    AppController controller, {
+    VoidCallback? onSaved,
+  }) {
+    return showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => OfficeConfigSheet(
+        controller: controller,
+        onSaved: onSaved ?? () {},
+      ),
+    );
+  }
+
   @override
-  State<_OfficeConfigSheet> createState() => _OfficeConfigSheetState();
+  State<OfficeConfigSheet> createState() => _OfficeConfigSheetState();
 }
 
-class _OfficeConfigSheetState extends State<_OfficeConfigSheet> {
+class _OfficeConfigSheetState extends State<OfficeConfigSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _radiusCtrl;
   late final TextEditingController _latCtrl;
   late final TextEditingController _lngCtrl;
+  late final TextEditingController _addressCtrl;
   bool _busy = false;
+  bool _isGeocoding = false;
 
   @override
   void initState() {
@@ -1202,6 +1258,22 @@ class _OfficeConfigSheetState extends State<_OfficeConfigSheet> {
     _radiusCtrl = TextEditingController(text: o.radius.round().toString());
     _latCtrl = TextEditingController(text: o.latitude?.toString() ?? '');
     _lngCtrl = TextEditingController(text: o.longitude?.toString() ?? '');
+    _addressCtrl = TextEditingController();
+
+    if (o.latitude != null && o.longitude != null && o.latitude != 0) {
+      geo.Geocoding().placemarkFromCoordinates(o.latitude!, o.longitude!).then((placemarks) {
+        if (placemarks.isNotEmpty && mounted) {
+          final p = placemarks.first;
+          final addr = [p.street, p.subAdministrativeArea, p.administrativeArea]
+              .whereType<String>()
+              .where((s) => s.trim().isNotEmpty)
+              .join(', ');
+          if (addr.isNotEmpty && _addressCtrl.text.isEmpty) {
+            _addressCtrl.text = addr;
+          }
+        }
+      }).catchError((_) {});
+    }
   }
 
   @override
@@ -1210,7 +1282,103 @@ class _OfficeConfigSheetState extends State<_OfficeConfigSheet> {
     _radiusCtrl.dispose();
     _latCtrl.dispose();
     _lngCtrl.dispose();
+    _addressCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _searchAddress() async {
+    final query = _addressCtrl.text.trim();
+    if (query.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng nhập địa chỉ cần tìm.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() => _isGeocoding = true);
+    try {
+      final locations = await geo.Geocoding().locationFromAddress(query);
+      if (locations.isNotEmpty) {
+        final loc = locations.first;
+        _latCtrl.text = loc.latitude.toStringAsFixed(6);
+        _lngCtrl.text = loc.longitude.toStringAsFixed(6);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Đã định vị tọa độ: ${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)}'),
+              backgroundColor: AppColors.success,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không tìm thấy tọa độ cho địa chỉ này.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi tìm địa chỉ: $e'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeocoding = false);
+    }
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isGeocoding = true);
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      _latCtrl.text = pos.latitude.toStringAsFixed(6);
+      _lngCtrl.text = pos.longitude.toStringAsFixed(6);
+      try {
+        final placemarks = await geo.Geocoding().placemarkFromCoordinates(pos.latitude, pos.longitude);
+        if (placemarks.isNotEmpty && mounted) {
+          final p = placemarks.first;
+          final addr = [p.street, p.subAdministrativeArea, p.administrativeArea]
+              .whereType<String>()
+              .where((s) => s.trim().isNotEmpty)
+              .join(', ');
+          if (addr.isNotEmpty) _addressCtrl.text = addr;
+        }
+      } catch (_) {}
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã lấy vị trí hiện tại: ${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}'),
+            backgroundColor: AppColors.success,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi lấy GPS: $e'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeocoding = false);
+    }
   }
 
   Future<void> _handleSave() async {
@@ -1309,6 +1477,63 @@ class _OfficeConfigSheetState extends State<_OfficeConfigSheet> {
                     suffixText: 'm',
                   ),
                   validator: (v) => (double.tryParse(v ?? '') == null) ? 'Bán kính không hợp lệ' : null,
+                ),
+                const SizedBox(height: 12),
+                // Ô tìm vị trí theo địa chỉ
+                TextFormField(
+                  controller: _addressCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Tìm tọa độ theo địa chỉ',
+                    hintText: 'VD: 227 Nguyễn Văn Cừ, Quận 5, TP.HCM',
+                    prefixIcon: const Icon(Icons.location_on_outlined, color: AppColors.teal),
+                    suffixIcon: _isGeocoding
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(12),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.teal),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.search_rounded, color: AppColors.teal),
+                            tooltip: 'Tìm tọa độ',
+                            onPressed: _searchAddress,
+                          ),
+                  ),
+                  onFieldSubmitted: (_) => _searchAddress(),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _isGeocoding ? null : _searchAddress,
+                        icon: const Icon(Icons.search_rounded, size: 16),
+                        label: const Text('Tìm từ địa chỉ', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.teal,
+                          side: const BorderSide(color: AppColors.teal),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _isGeocoding ? null : _useCurrentLocation,
+                        icon: const Icon(Icons.my_location_rounded, size: 16),
+                        label: const Text('Lấy GPS hiện tại', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.teal,
+                          side: const BorderSide(color: AppColors.teal),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Row(

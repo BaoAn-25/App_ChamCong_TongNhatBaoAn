@@ -5,6 +5,7 @@ import '../../domain/models.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/attendance_detail_sheet.dart';
 import 'attendance_map_screen.dart';
+import 'admin_management_dialogs.dart';
 
 /// Màn hình Tổng quan dành cho Quản trị viên (Admin Dashboard):
 /// 1. Thẻ chào gradient navy → teal, tên, huy hiệu vai trò, ngày hôm nay, nút "Đi tới Nhân sự"
@@ -51,20 +52,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return list;
   }
 
-  String _formatTodayVietnamese() {
-    final now = DateTime.now();
-    const days = [
-      'Chủ nhật',
-      'Thứ hai',
-      'Thứ ba',
-      'Thứ tư',
-      'Thứ năm',
-      'Thứ sáu',
-      'Thứ bảy',
-    ];
-    final weekday = days[now.weekday % 7];
-    return '$weekday, ngày ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
-  }
+
 
   String _getEmployeeName(String employeeId) {
     final emp = c.data.employees.where((e) => e.id == employeeId).firstOrNull;
@@ -87,16 +75,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         c.data.requests.where((r) => r.status == 'pending').length;
 
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       children: [
         // ====================================================================
-        // 1. THẺ CHÀO MỪNG (Gradient Navy → Teal, tên, role, ngày, nút chuyển tab)
+        // 1. LƯỚI STAT CARD 2x2 CHUẨN SCREEN 6
         // ====================================================================
-        _buildWelcomeBanner(context),
-        const SizedBox(height: 20),
+        _buildStatGrid(
+          presentText: '$presentEmployeesCount/${totalEmployees > 0 ? totalEmployees : c.data.employees.length}',
+          lateCount: lateCount,
+          notCheckedOutCount: notCheckedOutCount,
+          pendingRequestsCount: pendingRequestsCount,
+        ),
+        const SizedBox(height: 16),
 
         // ====================================================================
-        // 2. THAO TÁC NHANH LƯỚI 4 Ô (Icon trên, nhãn dưới)
+        // 2. THAO TÁC NHANH LƯỚI 4 Ô
         // ====================================================================
         const SectionHeader(
           title: 'Thao tác nhanh',
@@ -107,23 +100,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const SizedBox(height: 20),
 
         // ====================================================================
-        // 3. LƯỚI STAT CARD 2x2 (Bấm được, số liệu trực quan)
-        // ====================================================================
-        const SectionHeader(
-          title: 'Chỉ số hôm nay',
-          subtitle: 'Theo dõi tình hình điểm danh thời gian thực',
-        ),
-        const SizedBox(height: 8),
-        _buildStatGrid(
-          presentText: '$presentEmployeesCount/${totalEmployees > 0 ? totalEmployees : c.data.employees.length}',
-          lateCount: lateCount,
-          notCheckedOutCount: notCheckedOutCount,
-          pendingRequestsCount: pendingRequestsCount,
-        ),
-        const SizedBox(height: 24),
-
-        // ====================================================================
-        // 4. HOẠT ĐỘNG GẦN ĐÂY (StatusChip, bấm mở AttendanceDetailSheet)
+        // 3. HOẠT ĐỘNG CHẤM CÔNG GẦN ĐÂY
         // ====================================================================
         SectionHeader(
           title: 'Hoạt động chấm công gần đây',
@@ -138,147 +115,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 1. Thẻ chào mừng
-  Widget _buildWelcomeBanner(BuildContext context) {
-    final user = c.user;
-    final userName = user?.name ?? 'Quản trị viên';
-    final roleName = c.isAdmin
-        ? 'Admin'
-        : (user?.role == 'manager' ? 'Quản lý' : 'Nhân viên');
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: AppTheme.radiusCard,
-        gradient: const LinearGradient(
-          colors: [AppColors.navy, AppColors.teal],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.teal.withValues(alpha: 0.28),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: Colors.white.withValues(alpha: 0.2),
-                child: Text(
-                  userName.isNotEmpty ? userName[0].toUpperCase() : 'A',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Xin chào, $userName',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatTodayVietnamese(),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: AppTheme.radiusChip,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.35),
-                    width: 0.8,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.shield_outlined, size: 13, color: Colors.white),
-                    const SizedBox(width: 4),
-                    Text(
-                      roleName.toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Hệ thống đang quản lý ${c.data.employees.length} tài khoản và ${c.data.shifts.length} ca làm việc.',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.9),
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: InkWell(
-              onTap: widget.onNavigateToStaff,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.people_alt_outlined, size: 16, color: AppColors.navy),
-                    SizedBox(width: 6),
-                    Text(
-                      'Đi tới Nhân sự',
-                      style: TextStyle(
-                        color: AppColors.navy,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(Icons.arrow_forward_rounded, size: 14, color: AppColors.navy),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // 2. Thao tác nhanh lưới 4 ô
   Widget _buildQuickActionsGrid(BuildContext context, int pendingRequestsCount) {
@@ -300,7 +137,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               icon: Icons.more_time_rounded,
               color: const Color(0xFF0D9488),
               label: 'Tạo ca làm',
-              onTap: widget.onCreateShift ?? widget.onNavigateToStaff,
+              onTap: widget.onCreateShift ?? () => ShiftManagementSheet.show(context, c),
             ),
             _buildActionItem(
               width: itemWidth,

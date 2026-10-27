@@ -1,3 +1,6 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:app_cham_cong_tong_nhat_bao_an/domain/models.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +13,10 @@ import 'package:app_cham_cong_tong_nhat_bao_an/ui/auth_page.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+  });
 
   test('All default repositories share the authenticated API client', () {
     final c = AppController();
@@ -252,11 +259,13 @@ class FakeAuth extends AuthService {
   );
 
   @override
-  Future<void> verifyEmail({
+  Future<Employee?> verifyEmail({
     required String challengeId,
     required String code,
+    String? deviceId,
   }) async {
     expect(code, '123456');
     verifiedChallenge = challengeId;
+    return null;
   }
 }

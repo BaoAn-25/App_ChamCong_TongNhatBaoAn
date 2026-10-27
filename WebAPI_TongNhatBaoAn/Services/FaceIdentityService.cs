@@ -10,7 +10,7 @@ public sealed class FaceUnavailableException : Exception { }
 
 public static class FaceMath
 {
-    public const double Threshold = 0.45;
+    public const double Threshold = 0.65; // Nâng ngưỡng an toàn cao chống nhận diện nhầm người khác
     public static double Cosine(float[] a, float[] b)
     {
         if (a.Length != 128 || b.Length != 128 || a.Any(x => !float.IsFinite(x)) || b.Any(x => !float.IsFinite(x)))

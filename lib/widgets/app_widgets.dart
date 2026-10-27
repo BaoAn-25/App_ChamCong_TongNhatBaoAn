@@ -75,9 +75,12 @@ class AppCard extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: AppTheme.radiusCard,
-        child: Padding(
-          padding: padding,
-          child: child,
+        child: Material(
+          color: Colors.transparent,
+          child: Padding(
+            padding: padding,
+            child: child,
+          ),
         ),
       ),
     );
@@ -345,6 +348,7 @@ class EmptyState extends StatelessWidget {
   final String? description;
   final IconData icon;
   final Widget? action;
+  final EdgeInsetsGeometry? padding;
 
   const EmptyState({
     super.key,
@@ -352,45 +356,49 @@ class EmptyState extends StatelessWidget {
     this.description,
     this.icon = Icons.inbox_outlined,
     this.action,
+    this.padding,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppTheme.space32, horizontal: AppTheme.space16),
+      padding: padding ?? const EdgeInsets.symmetric(vertical: AppTheme.space16, horizontal: AppTheme.space16),
       child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Vòng tròn tint 72px với opacity 10%
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppColors.teal.withValues(alpha: 0.10),
-                shape: BoxShape.circle,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Vòng tròn tint 72px với opacity 10%
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.teal.withValues(alpha: 0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 30, color: AppColors.teal),
               ),
-              child: Icon(icon, size: 34, color: AppColors.teal),
-            ),
-            const SizedBox(height: AppTheme.space16),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: AppTheme.sectionTitle,
-            ),
-            if (description != null) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: AppTheme.space12),
               Text(
-                description!,
+                title,
                 textAlign: TextAlign.center,
-                style: AppTheme.captionSecondary.copyWith(height: 1.4),
+                style: AppTheme.sectionTitle,
               ),
+              if (description != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  description!,
+                  textAlign: TextAlign.center,
+                  style: AppTheme.captionSecondary.copyWith(height: 1.4),
+                ),
+              ],
+              if (action != null) ...[
+                const SizedBox(height: AppTheme.space20),
+                action!,
+              ],
             ],
-            if (action != null) ...[
-              const SizedBox(height: AppTheme.space20),
-              action!,
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -598,12 +606,16 @@ class _PrimaryButtonState extends State<PrimaryButton> {
                           Icon(widget.icon, color: Colors.white, size: 18),
                           const SizedBox(width: AppTheme.space8),
                         ],
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                        Flexible(
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ],
@@ -659,12 +671,16 @@ class SecondaryButton extends StatelessWidget {
                 Icon(icon, size: 18, color: AppColors.teal),
                 const SizedBox(width: AppTheme.space8),
               ],
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ),
             ],
@@ -773,6 +789,8 @@ class AppHeader extends StatelessWidget {
                             const SizedBox(height: 3),
                             Text(
                               subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.white.withValues(alpha: 0.85),

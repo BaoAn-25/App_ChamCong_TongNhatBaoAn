@@ -18,8 +18,11 @@ import 'punch_page.dart';
 import 'stats_page.dart';
 import 'biometric_page.dart';
 import 'face_page.dart';
+import '../widgets/shared_navy_header.dart';
 import '../widgets/attendance_detail_sheet.dart';
 import '../screens/admin/attendance_map_screen.dart';
+import '../screens/admin/admin_shell.dart';
+import '../screens/manager/manager_shell.dart';
 
 class HomePage extends StatefulWidget {
   final AppController controller;
@@ -427,6 +430,25 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (c.isAdmin) {
+      return AdminShell(
+        controller: c,
+        onLogout: () async {
+          await SessionStorage.clearSession();
+          await c.logout();
+        },
+      );
+    }
+    if (c.isManager) {
+      return ManagerShell(
+        controller: c,
+        onLogout: () async {
+          await SessionStorage.clearSession();
+          await c.logout();
+        },
+      );
+    }
+
     final pendingCount = c.data.requests
         .where((r) => r.status == 'pending' && (c.isStaff || r.employeeId == c.user?.id))
         .length;
@@ -462,9 +484,13 @@ class _HomePageState extends State<HomePage> {
           };
 
     final currentTitle = labels[page < labels.length ? page : 0];
+    final hideAppBar = isEmployee;
 
-    return Scaffold(
-      appBar: AppBar(
+    final scaffold = Scaffold(
+      backgroundColor: const Color(0xFFF4F7FA),
+      appBar: hideAppBar
+          ? null
+          : AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -557,7 +583,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          if (performing || c.isSyncing)
+          if ((performing || c.isSyncing) && !hideAppBar)
             const LinearProgressIndicator(
               minHeight: 2.5,
               backgroundColor: Colors.transparent,
@@ -801,6 +827,16 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
     );
+
+    if (isEmployee) {
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light.copyWith(
+          statusBarColor: Colors.transparent,
+        ),
+        child: scaffold,
+      );
+    }
+    return scaffold;
   }
 
   // Bảng mở rộng Tiện ích nhanh theo yêu cầu
@@ -1076,12 +1112,21 @@ class _HomePageState extends State<HomePage> {
         ),
       );
 
-  Widget list(List<Widget> children) => RefreshIndicator(
+  Widget list(List<Widget> children, {Widget? header}) => RefreshIndicator(
     onRefresh: c.syncAll,
     child: ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(20),
-      children: children,
+      padding: const EdgeInsets.only(bottom: 28),
+      children: [
+        ?header,
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, header != null ? 16 : 20, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          ),
+        ),
+      ],
     ),
   );
 
@@ -3604,235 +3649,573 @@ class _HomePageState extends State<HomePage> {
       1,
     ).weekday; // 1: Mon, 7: Sun
 
+    final leadingEmptySlots = firstWeekday - 1;
+    final totalGridSlots = (((leadingEmptySlots + daysInMonth + 6) ~/ 7) * 7);
+
     final now = DateTime.now();
 
-    return list([
-      // Card bộ lọc chọn Tháng
-      Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF0F7C8A).withValues(alpha: 0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.chevron_left_rounded, size: 28),
-              onPressed: () {
-                setState(() {
-                  _selectedTimesheetMonth = DateTime(
-                    _selectedTimesheetMonth.year,
-                    _selectedTimesheetMonth.month - 1,
-                    1,
-                  );
-                });
-              },
-            ),
-            Row(
-              children: [
-                const Icon(Icons.calendar_month_rounded, color: Color(0xFF0F7C8A), size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ],
-            ),
-            IconButton(
-              icon: const Icon(Icons.chevron_right_rounded, size: 28),
-              onPressed: () {
-                setState(() {
-                  _selectedTimesheetMonth = DateTime(
-                    _selectedTimesheetMonth.year,
-                    _selectedTimesheetMonth.month + 1,
-                    1,
-                  );
-                });
-              },
-            ),
-          ],
-        ),
-      ),
-
-      // 4 metrics tháng
-      LayoutBuilder(
-        builder: (ctx, constraints) {
-          final w = constraints.maxWidth;
-          return Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              metric('Số ngày công', '$totalDays ngày', Icons.fact_check_rounded, const Color(0xFF0F7C8A), w),
-              metric('Đúng giờ', '$onTimeDays ngày', Icons.check_circle_rounded, const Color(0xFF16A34A), w),
-              metric('Đi muộn', '$lateDays ngày', Icons.warning_amber_rounded, const Color(0xFFEA580C), w),
-              metric('Tổng giờ làm', '${totalHours.toStringAsFixed(1)}h', Icons.schedule_rounded, const Color(0xFF6366F1), w),
-            ],
-          );
-        },
-      ),
-
-      const SizedBox(height: 16),
-
-      // Mini Calendar trực quan
-      Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+    return RefreshIndicator(
+      onRefresh: c.syncAll,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Row(
+            // Top curved Navy Header with Month Selector and floating 4 metric cards
+            Stack(
+              clipBehavior: Clip.none,
               children: [
-                Icon(Icons.calendar_view_month_rounded, size: 18, color: Color(0xFF0F7C8A)),
-                SizedBox(width: 8),
-                Text(
-                  'Lịch làm việc tháng',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                    color: Color(0xFF0F172A),
+                // Curved Navy Header đồng bộ dùng chung
+                SharedNavyHeader(
+                  title: 'Bảng công',
+                  showSubtitle: false,
+                  controller: c,
+                  bottomPadding: 60,
+                  customTrailing: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _selectedTimesheetMonth = DateTime(
+                                _selectedTimesheetMonth.year,
+                                _selectedTimesheetMonth.month - 1,
+                                1,
+                              );
+                            });
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.chevron_left_rounded, color: Colors.white, size: 20),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            'Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _selectedTimesheetMonth = DateTime(
+                                _selectedTimesheetMonth.year,
+                                _selectedTimesheetMonth.month + 1,
+                                1,
+                              );
+                            });
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.chevron_right_rounded, color: Colors.white, size: 20),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _WeekdayHeader('T2'),
-                _WeekdayHeader('T3'),
-                _WeekdayHeader('T4'),
-                _WeekdayHeader('T5'),
-                _WeekdayHeader('T6'),
-                _WeekdayHeader('T7', isWeekend: true),
-                _WeekdayHeader('CN', isWeekend: true),
-              ],
-            ),
-            const Divider(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: 42,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                mainAxisSpacing: 6,
-                crossAxisSpacing: 6,
-                childAspectRatio: 1.0,
-              ),
-              itemBuilder: (ctx, index) {
-                final dayNumber = index - (firstWeekday - 1) + 1;
-                if (dayNumber < 1 || dayNumber > daysInMonth) {
-                  return const SizedBox.shrink();
-                }
-
-                final targetDate = DateTime(
-                  _selectedTimesheetMonth.year,
-                  _selectedTimesheetMonth.month,
-                  dayNumber,
-                );
-
-                final dayRecords = monthRecords.where((a) =>
-                    a.checkIn.year == targetDate.year &&
-                    a.checkIn.month == targetDate.month &&
-                    a.checkIn.day == targetDate.day).toList();
-
-                final isToday = now.year == targetDate.year &&
-                    now.month == targetDate.month &&
-                    now.day == targetDate.day;
-
-                Color bg = const Color(0xFFF8FAFC);
-                Color textCol = const Color(0xFF334155);
-                Widget? indicator;
-
-                if (dayRecords.isNotEmpty) {
-                  final anyLate = dayRecords.any((a) => a.lateMinutes > 0);
-                  if (anyLate) {
-                    bg = const Color(0xFFFFF7ED);
-                    textCol = const Color(0xFFC2410C);
-                    indicator = Container(
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFEA580C),
-                        shape: BoxShape.circle,
-                      ),
-                    );
-                  } else {
-                    bg = const Color(0xFFF0FDF4);
-                    textCol = const Color(0xFF15803D);
-                    indicator = Container(
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF16A34A),
-                        shape: BoxShape.circle,
-                      ),
-                    );
-                  }
-                }
-
-                return Container(
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(10),
-                    border: isToday
-                        ? Border.all(color: const Color(0xFF0F7C8A), width: 1.8)
-                        : Border.all(color: const Color(0xFFE2E8F0), width: 0.8),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                // 4 Metric cards floating across the bottom edge of the Navy header
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: -24,
+                  child: Row(
                     children: [
-                      Text(
-                        '$dayNumber',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: isToday ? FontWeight.w800 : FontWeight.w600,
-                          color: textCol,
+                      Expanded(
+                        child: _buildMinimalTimesheetMetric(
+                          label: 'Số ngày công',
+                          value: '$totalDays',
+                          color: const Color(0xFF0F7C8A),
                         ),
                       ),
-                      if (indicator != null) ...[
-                        const SizedBox(height: 2),
-                        indicator,
-                      ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildMinimalTimesheetMetric(
+                          label: 'Đúng giờ',
+                          value: '$onTimeDays',
+                          color: const Color(0xFF16A34A),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildMinimalTimesheetMetric(
+                          label: 'Đi muộn',
+                          value: '$lateDays',
+                          color: const Color(0xFFEA580C),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildMinimalTimesheetMetric(
+                          label: 'Tổng giờ làm',
+                          value: '${totalHours.toStringAsFixed(totalHours % 1 == 0 ? 0 : 1)}h',
+                          color: const Color(0xFF6366F1),
+                        ),
+                      ),
                     ],
                   ),
-                );
-              },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 38),
+
+            // Minimalist Calendar Card
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0B1F3A).withValues(alpha: 0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Weekday Header Row
+                  const Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _WeekdayHeader('T2'),
+                      _WeekdayHeader('T3'),
+                      _WeekdayHeader('T4'),
+                      _WeekdayHeader('T5'),
+                      _WeekdayHeader('T6'),
+                      _WeekdayHeader('T7'),
+                      _WeekdayHeader('CN', isWeekend: true),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: totalGridSlots,
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 7,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 6,
+                      childAspectRatio: 1.0,
+                    ),
+                    itemBuilder: (ctx, index) {
+                      final dayNumber = index - leadingEmptySlots + 1;
+                      if (dayNumber < 1 || dayNumber > daysInMonth) {
+                        return const SizedBox.shrink();
+                      }
+
+                      final targetDate = DateTime(
+                        _selectedTimesheetMonth.year,
+                        _selectedTimesheetMonth.month,
+                        dayNumber,
+                      );
+
+                      final dayRecords = monthRecords.where((a) =>
+                          a.checkIn.year == targetDate.year &&
+                          a.checkIn.month == targetDate.month &&
+                          a.checkIn.day == targetDate.day).toList();
+
+                      final isToday = now.year == targetDate.year &&
+                          now.month == targetDate.month &&
+                          now.day == targetDate.day;
+
+                      Color bg = Colors.transparent;
+                      Color textColor = targetDate.weekday >= 6
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF334155);
+                      FontWeight fontWeight = FontWeight.w600;
+
+                      if (isToday) {
+                        bg = const Color(0xFF0F7C8A);
+                        textColor = Colors.white;
+                        fontWeight = FontWeight.w800;
+                      } else if (dayRecords.isNotEmpty) {
+                        final hasMissingOut = dayRecords.any(
+                          (a) => a.checkOut == null && now.isAfter(a.scheduledEnd),
+                        );
+                        final hasLate = dayRecords.any((a) => a.lateMinutes > 0);
+
+                        if (hasMissingOut) {
+                          bg = const Color(0xFFFEE2E2);
+                          textColor = const Color(0xFFDC2626);
+                          fontWeight = FontWeight.w700;
+                        } else if (hasLate) {
+                          bg = const Color(0xFFFEF3C7);
+                          textColor = const Color(0xFFB45309);
+                          fontWeight = FontWeight.w700;
+                        } else {
+                          bg = const Color(0xFFE6F4EA);
+                          textColor = const Color(0xFF15803D);
+                          fontWeight = FontWeight.w700;
+                        }
+                      }
+
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: dayRecords.isNotEmpty
+                            ? () {
+                                AttendanceDetailSheet.show(
+                                  context,
+                                  attendance: dayRecords.first,
+                                  employeeName: employeeName(dayRecords.first.employeeId),
+                                  office: c.data.office,
+                                );
+                              }
+                            : null,
+                        child: Center(
+                          child: Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              color: bg,
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              '$dayNumber',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: fontWeight,
+                                color: textColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  const Divider(height: 1, thickness: 0.8, color: Color(0xFFF1F5F9)),
+                  const SizedBox(height: 12),
+                  // Legend Row
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 16,
+                    runSpacing: 8,
+                    children: [
+                      _buildCalendarLegendDot(const Color(0xFF16A34A), 'Đủ công'),
+                      _buildCalendarLegendDot(const Color(0xFFEA580C), 'Đi trễ'),
+                      _buildCalendarLegendDot(const Color(0xFFEF4444), 'Thiếu giờ ra'),
+                      _buildCalendarLegendDot(const Color(0xFF0F7C8A), 'Hôm nay'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Section "Gần đây"
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0B1F3A).withValues(alpha: 0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Gần đây',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (monthRecords.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: Text(
+                          'Không có dữ liệu chấm công nào trong tháng này.',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                        ),
+                      ),
+                    )
+                  else ...[
+                    ...((List<Attendance>.from(monthRecords)..sort((a, b) => b.checkIn.compareTo(a.checkIn)))
+                        .asMap()
+                        .entries
+                        .map((entry) {
+                          final idx = entry.key;
+                          final a = entry.value;
+                          return Column(
+                            children: [
+                              if (idx > 0)
+                                const Divider(height: 20, thickness: 0.7, color: Color(0xFFF1F5F9)),
+                              _buildRecentAttendanceItem(a, now),
+                            ],
+                          );
+                        })),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
 
-      // Danh sách chấm công chi tiết trong tháng
-      Section(
-        title: 'Bản ghi chấm công Tháng ${_selectedTimesheetMonth.month}/${_selectedTimesheetMonth.year}',
-        child: monthRecords.isEmpty
-            ? const EmptyState('Không có dữ liệu chấm công nào trong tháng này.')
-            : Column(
-                children: (monthRecords..sort((a, b) => b.checkIn.compareTo(a.checkIn)))
-                    .map(attendanceTile)
-                    .toList(),
-              ),
+  Widget _buildMinimalTimesheetMetric({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0B1F3A).withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(color: const Color(0xFFF1F5F9)),
       ),
-    ]);
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: color,
+                height: 1.1,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF64748B),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalendarLegendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF64748B),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecentAttendanceItem(Attendance a, DateTime now) {
+    final isToday = now.year == a.checkIn.year &&
+        now.month == a.checkIn.month &&
+        now.day == a.checkIn.day;
+    final isLate = a.lateMinutes > 0;
+    final isMissingCheckout = a.checkOut == null && now.isAfter(a.scheduledEnd);
+    final inShift = a.checkOut == null && !isMissingCheckout;
+
+    const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+    final weekdayLabel = weekdays[(a.checkIn.weekday - 1).clamp(0, 6)];
+
+    final String timeLabel;
+    if (a.checkOut != null) {
+      timeLabel = '${clock(a.checkIn)} - ${clock(a.checkOut!)} • ${a.hours.toStringAsFixed(1)}h';
+    } else {
+      timeLabel = 'Vào ${clock(a.checkIn)}';
+    }
+
+    final String subLabel;
+    if (inShift) {
+      subLabel = 'Đang làm việc • ${a.shiftName}';
+    } else if (isMissingCheckout) {
+      subLabel = 'Chưa bấm giờ ra • ${a.shiftName}';
+    } else if (isLate) {
+      subLabel = 'Muộn ${a.lateMinutes} phút • ${a.shiftName}';
+    } else {
+      subLabel = 'Vào đúng giờ • ${a.shiftName}';
+    }
+
+    final String chipLabel;
+    final Color chipBg;
+    final Color chipText;
+    if (inShift) {
+      chipLabel = 'Đang làm';
+      chipBg = const Color(0xFFCCFBF1);
+      chipText = const Color(0xFF0F766E);
+    } else if (isMissingCheckout) {
+      chipLabel = 'Thiếu ra';
+      chipBg = const Color(0xFFFEE2E2);
+      chipText = const Color(0xFFDC2626);
+    } else if (isLate) {
+      chipLabel = 'Trễ ${a.lateMinutes}p';
+      chipBg = const Color(0xFFFEF3C7);
+      chipText = const Color(0xFFB45309);
+    } else {
+      chipLabel = 'Đúng giờ';
+      chipBg = const Color(0xFFDCFCE7);
+      chipText = const Color(0xFF15803D);
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        AttendanceDetailSheet.show(
+          context,
+          attendance: a,
+          employeeName: employeeName(a.employeeId),
+          office: c.data.office,
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            // Date badge
+            Container(
+              width: 44,
+              height: 46,
+              decoration: BoxDecoration(
+                color: isToday
+                    ? const Color(0xFF0F7C8A).withValues(alpha: 0.12)
+                    : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+                border: isToday
+                    ? Border.all(color: const Color(0xFF0F7C8A).withValues(alpha: 0.3))
+                    : null,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    weekdayLabel,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: isToday ? const Color(0xFF0F7C8A) : const Color(0xFF64748B),
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${a.checkIn.day}',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: isToday ? const Color(0xFF0F7C8A) : const Color(0xFF1E293B),
+                      height: 1.1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Time & Subtitle
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    timeLabel,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF64748B),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Status Chip
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: chipBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                chipLabel,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: chipText,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget history() {
@@ -4085,6 +4468,13 @@ class _HomePageState extends State<HomePage> {
             )
             .toList()
           ..sort((a, b) => b.from.compareTo(a.from));
+    final isEmployee = !c.isStaff;
+    final header = isEmployee
+        ? SharedNavyHeader(
+            title: 'Đơn từ',
+            controller: c,
+          )
+        : null;
     return list([
       _pageHint(
         c.isStaff ? 'Quản lý duyệt đơn' : 'Theo dõi đơn của bạn',
@@ -4370,7 +4760,7 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
-    ]);
+    ], header: header);
   }
 
   Future<void> editRequest([WorkRequest? r]) async {
@@ -4457,6 +4847,14 @@ class _HomePageState extends State<HomePage> {
         : c.user?.role == 'manager'
         ? 'Quản lý (Manager)'
         : 'Nhân viên (Employee)';
+
+    final isEmployee = !c.isStaff;
+    final header = isEmployee
+        ? SharedNavyHeader(
+            title: 'Tài khoản',
+            controller: c,
+          )
+        : null;
 
     return list([
       // Profile Header Card Hiện Đại
@@ -4725,7 +5123,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       const SizedBox(height: 16),
-    ]);
+    ], header: header);
   }
 
   Widget _profileInfoRow({

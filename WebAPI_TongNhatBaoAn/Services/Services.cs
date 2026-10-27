@@ -86,6 +86,42 @@ public class TokenService(IConfiguration cfg, AppDb db)
         });
         return raw;
     }
+
+    public string CreateTrustToken(Employee e, string deviceId)
+    {
+        var expires = DateTimeOffset.UtcNow.AddDays(int.Parse(cfg["Jwt:TrustDays"] ?? "60")).ToUnixTimeSeconds();
+        var payload = $"{e.Id}:{deviceId.Trim()}:{expires}";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(cfg["Jwt:Key"]!));
+        var signature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes($"{payload}:{signature}"));
+    }
+
+    public bool VerifyTrustToken(Employee e, string? deviceId, string? trustToken)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || string.IsNullOrWhiteSpace(trustToken)) return false;
+        try
+        {
+            var raw = Encoding.UTF8.GetString(Convert.FromBase64String(trustToken));
+            var parts = raw.Split(':');
+            if (parts.Length != 4) return false;
+            var uid = parts[0];
+            var dev = parts[1];
+            var expStr = parts[2];
+            var sig = parts[3];
+
+            if (uid != e.Id.ToString() || dev != deviceId.Trim()) return false;
+            if (!long.TryParse(expStr, out var exp) || exp < DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return false;
+
+            var payload = $"{uid}:{dev}:{expStr}";
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(cfg["Jwt:Key"]!));
+            var expectedSig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+            return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(sig), Encoding.UTF8.GetBytes(expectedSig));
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 public class OtpService(AppDb db, IConfiguration cfg, OtpEmailSender emailSender, IHostEnvironment environment)

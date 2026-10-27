@@ -11,7 +11,9 @@ class SessionStorage {
   static const _keyExpiresAt = 'jwt_expires_at';
   static const _keyRememberMe = 'session_remember_me';
   static const _keyDeviceId = 'app_device_id';
+  static const _keyLastUsername = 'app_last_username';
   static const _prefixTrustedDevice = 'trusted_device_';
+  static const _prefixTrustToken = 'trust_token_';
 
   /// 5. Lấy hoặc tạo mới DeviceId (UUID tạo một lần duy nhất trên máy)
   static Future<String> getDeviceId() async {
@@ -134,6 +136,40 @@ class SessionStorage {
       return val == 'true';
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Lưu tên đăng nhập gần nhất trên máy để tiện đăng nhập nhanh
+  static Future<void> saveLastUsername(String username) async {
+    try {
+      await _storage.write(key: _keyLastUsername, value: username.trim().toLowerCase());
+    } catch (_) {}
+  }
+
+  /// Lấy tên đăng nhập gần nhất trên máy
+  static Future<String?> getLastUsername() async {
+    try {
+      return await _storage.read(key: _keyLastUsername);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Lưu Trust Token ký bởi server cho thiết bị tin cậy
+  static Future<void> saveTrustToken(String username, String deviceId, String token) async {
+    try {
+      final key = '$_prefixTrustToken${username.toLowerCase()}_$deviceId';
+      await _storage.write(key: key, value: token);
+    } catch (_) {}
+  }
+
+  /// Lấy Trust Token của tài khoản trên thiết bị này
+  static Future<String?> getTrustToken(String username, String deviceId) async {
+    try {
+      final key = '$_prefixTrustToken${username.toLowerCase()}_$deviceId';
+      return await _storage.read(key: key);
+    } catch (_) {
+      return null;
     }
   }
 }

@@ -332,6 +332,9 @@ class AppData {
   };
 
   factory AppData.fromJson(Json j) {
+    if (j['version'] != null && j['version'] != 1) {
+      throw FormatException('Unsupported storage version: ');
+    }
     return AppData(
       employees: (j['employees'] as List?)
               ?.map((e) => Employee.fromJson(e))

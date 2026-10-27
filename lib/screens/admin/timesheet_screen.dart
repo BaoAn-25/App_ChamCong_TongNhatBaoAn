@@ -18,10 +18,12 @@ import 'employee_history_screen.dart';
 /// 5. Bấm vào dòng mở AttendanceDetailSheet
 class AdminTimesheetScreen extends StatefulWidget {
   final AppController controller;
+  final String? departmentFilter;
 
   const AdminTimesheetScreen({
     super.key,
     required this.controller,
+    this.departmentFilter,
   });
 
   @override
@@ -49,6 +51,14 @@ class _AdminTimesheetScreenState extends State<AdminTimesheetScreen> {
       final searchTarget = '$empName ${a.shiftName} ${dateLabel(a.checkIn)}'.toLowerCase();
       if (_searchQuery.isNotEmpty && !searchTarget.contains(_searchQuery.toLowerCase())) {
         return false;
+      }
+
+      final scopedDept = widget.departmentFilter ?? (c.isManager ? c.user?.department : null);
+      if (scopedDept != null && scopedDept.isNotEmpty) {
+        final dept = _getEmployeeDept(a.employeeId);
+        if (dept?.toLowerCase() != scopedDept.toLowerCase()) {
+          return false;
+        }
       }
 
       if (_dateRange != null) {
@@ -219,15 +229,20 @@ class _AdminTimesheetScreenState extends State<AdminTimesheetScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Danh sách chấm công (${filtered.length})',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
+            Expanded(
+              child: Text(
+                'Danh sách chấm công (${filtered.length})',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 // Nút phụ: Sao chép
                 IconButton(
@@ -243,7 +258,7 @@ class _AdminTimesheetScreenState extends State<AdminTimesheetScreen> {
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.teal,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                 ),
@@ -281,29 +296,34 @@ class _AdminTimesheetScreenState extends State<AdminTimesheetScreen> {
     required int lateCount,
   }) {
     return AppCard(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildSummaryColumn(
-            label: 'Số bản ghi',
-            value: '$recordsCount',
-            icon: Icons.list_alt_rounded,
-            color: AppColors.info,
+          Expanded(
+            child: _buildSummaryColumn(
+              label: 'Số bản ghi',
+              value: '$recordsCount',
+              icon: Icons.list_alt_rounded,
+              color: AppColors.info,
+            ),
           ),
           Container(width: 1, height: 36, color: AppColors.border),
-          _buildSummaryColumn(
-            label: 'Tổng số giờ',
-            value: '${totalHours.toStringAsFixed(1)}h',
-            icon: Icons.access_time_rounded,
-            color: AppColors.teal,
+          Expanded(
+            child: _buildSummaryColumn(
+              label: 'Tổng giờ',
+              value: '${totalHours.toStringAsFixed(1)}h',
+              icon: Icons.access_time_rounded,
+              color: AppColors.teal,
+            ),
           ),
           Container(width: 1, height: 36, color: AppColors.border),
-          _buildSummaryColumn(
-            label: 'Đi trễ',
-            value: '$lateCount lượt',
-            icon: Icons.alarm_off_outlined,
-            color: lateCount > 0 ? AppColors.warning : AppColors.success,
+          Expanded(
+            child: _buildSummaryColumn(
+              label: 'Đi trễ',
+              value: '$lateCount',
+              icon: Icons.alarm_off_outlined,
+              color: lateCount > 0 ? AppColors.warning : AppColors.success,
+            ),
           ),
         ],
       ),

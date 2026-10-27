@@ -446,8 +446,9 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    Widget content;
     if (_errorMessage != null) {
-      return Center(
+      content = Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -478,10 +479,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
           ),
         ),
       );
-    }
-
-    if (_isLoading) {
-      return ListView(
+    } else if (_isLoading) {
+      content = ListView(
         padding: const EdgeInsets.all(AppTheme.space16),
         children: const [
           SkeletonLoader(width: double.infinity, height: 48),
@@ -493,49 +492,82 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
           SkeletonLoader(width: double.infinity, height: 140),
         ],
       );
+    } else {
+      content = RefreshIndicator(
+        onRefresh: _refreshData,
+        child: ListView(
+          padding: const EdgeInsets.all(AppTheme.space16),
+          children: [
+            // ====================================================================
+            // 6. TOGGLE TUẦN / THÁNG VỚI ANIMATION 200MS
+            // ====================================================================
+            _buildPeriodToggle(),
+            const SizedBox(height: 16),
+
+            // ====================================================================
+            // 3. THẺ ĐIỂM CHUYÊN CẦN (Vòng tròn tiến độ, đổi màu theo 4 mức)
+            // ====================================================================
+            _buildAttendanceScoreCard(),
+            const SizedBox(height: 16),
+
+            // 4 THẺ TÓM TẮT NHANH CHỈ SỐ
+            _buildQuickStatCards(),
+            const SizedBox(height: 24),
+
+            // ====================================================================
+            // 4. BIỂU ĐỒ GIỜ CÔNG (maxY, nhãn mỗi 2h, tooltip, màu cột)
+            // ====================================================================
+            SectionHeader(
+              title: 'Biểu đồ giờ công',
+              subtitle: _viewMode == 0 ? 'Phân bố theo từng ngày trong tuần' : 'Phân bố theo từng tuần trong tháng',
+            ),
+            const SizedBox(height: 8),
+            _buildHoursBarChartCard(),
+            const SizedBox(height: 24),
+
+            // ====================================================================
+            // 2. CẢNH BÁO BẤT THƯỜNG (Dựa trên quy tắc)
+            // ====================================================================
+            SectionHeader(
+              title: 'Cảnh báo bất thường',
+              subtitle: 'Dựa trên quy tắc: đi trễ, thiếu check-out, giờ công trung bình',
+            ),
+            const SizedBox(height: 8),
+            _buildAbnormalAlertsSection(),
+            const SizedBox(height: 24),
+          ],
+        ),
+      );
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(AppTheme.space16),
-      children: [
-        // ====================================================================
-        // 6. TOGGLE TUẦN / THÁNG VỚI ANIMATION 200MS
-        // ====================================================================
-        _buildPeriodToggle(),
-        const SizedBox(height: 16),
-
-        // ====================================================================
-        // 3. THẺ ĐIỂM CHUYÊN CẦN (Vòng tròn tiến độ, đổi màu theo 4 mức)
-        // ====================================================================
-        _buildAttendanceScoreCard(),
-        const SizedBox(height: 16),
-
-        // 4 THẺ TÓM TẮT NHANH CHỈ SỐ
-        _buildQuickStatCards(),
-        const SizedBox(height: 24),
-
-        // ====================================================================
-        // 4. BIỂU ĐỒ GIỜ CÔNG (maxY, nhãn mỗi 2h, tooltip, màu cột)
-        // ====================================================================
-        SectionHeader(
-          title: 'Biểu đồ giờ công',
-          subtitle: _viewMode == 0 ? 'Phân bố theo từng ngày trong tuần' : 'Phân bố theo từng tuần trong tháng',
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.navy,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
-        const SizedBox(height: 8),
-        _buildHoursBarChartCard(),
-        const SizedBox(height: 24),
-
-        // ====================================================================
-        // 2. CẢNH BÁO BẤT THƯỜNG (Dựa trên quy tắc)
-        // ====================================================================
-        SectionHeader(
-          title: 'Cảnh báo bất thường',
-          subtitle: 'Dựa trên quy tắc: đi trễ, thiếu check-out, giờ công trung bình',
+        title: const Text(
+          'Thống kê & Báo cáo',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
-        const SizedBox(height: 8),
-        _buildAbnormalAlertsSection(),
-        const SizedBox(height: 24),
-      ],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            tooltip: 'Làm mới',
+            onPressed: _refreshData,
+          ),
+        ],
+        centerTitle: false,
+      ),
+      body: content,
     );
   }
 
@@ -643,17 +675,19 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
-                    Text(
+                    const Text(
                       'Điểm chuyên cần',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
@@ -782,13 +816,13 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 12,
+            runSpacing: 6,
             children: [
               _buildLegendDot(color: AppColors.teal, label: 'Đủ ca (≥8h)'),
-              const SizedBox(width: 12),
               _buildLegendDot(color: AppColors.warning, label: 'Thiếu giờ (<8h)'),
-              const SizedBox(width: 12),
               _buildLegendDot(color: Colors.grey.shade400, label: '0 giờ'),
             ],
           ),

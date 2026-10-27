@@ -52,6 +52,7 @@ class ApiClient {
   }
 
   bool get hasTokens => _accessToken != null && _refreshToken != null;
+  String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
 
   Future<void> setTokens({

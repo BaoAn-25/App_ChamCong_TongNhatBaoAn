@@ -225,19 +225,33 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> verifyEmail(String code) async {
+  Future<void> verifyEmail(String code, {String? deviceId}) async {
     if (pendingChallengeId == null) {
       throw StateError('Không có phiên xác minh email.');
     }
-    await auth.verifyEmail(challengeId: pendingChallengeId!, code: code);
+    final loggedInUser = await auth.verifyEmail(challengeId: pendingChallengeId!, code: code, deviceId: deviceId);
     pendingChallengeId = null;
     pendingAction = null;
+    if (loggedInUser != null) {
+      _user = loggedInUser;
+      await syncAll();
+    }
     notifyListeners();
   }
 
-  Future<void> beginLogin(String username, String password) async {
+  Future<void> beginLogin(String username, String password, {String? deviceId, String? trustToken}) async {
     demoOtp = null;
-    final started = await auth.login(username: username, password: password);
+    final started = await auth.login(username: username, password: password, deviceId: deviceId, trustToken: trustToken);
+    if (started.isDirectLogin && started.user != null) {
+      _user = started.user;
+      pendingChallengeId = null;
+      pendingAction = null;
+      pendingUsername = null;
+      pendingEmail = null;
+      await syncAll();
+      notifyListeners();
+      return;
+    }
     pendingChallengeId = started.challengeId;
     pendingAction = 'login';
     pendingUsername = username;
@@ -289,11 +303,11 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> verifyOtp(String code) async {
+  Future<void> verifyOtp(String code, {String? deviceId}) async {
     if (pendingChallengeId == null) {
       throw StateError('Phiên OTP hết hạn hoặc không hợp lệ.');
     }
-    _user = await auth.verifyOtp(challengeId: pendingChallengeId!, code: code);
+    _user = await auth.verifyOtp(challengeId: pendingChallengeId!, code: code, deviceId: deviceId);
     pendingChallengeId = null;
     pendingAction = null;
     pendingUsername = null;

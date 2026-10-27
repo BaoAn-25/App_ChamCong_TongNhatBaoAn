@@ -12,10 +12,12 @@ import '../../widgets/app_widgets.dart';
 ///    Chip lọc (Tất cả / Chờ duyệt / Đã duyệt / Từ chối), FAB "+ Tạo đơn" có nhãn, EmptyState khi trống.
 class AdminRequestsScreen extends StatefulWidget {
   final AppController controller;
+  final String? departmentFilter;
 
   const AdminRequestsScreen({
     super.key,
     required this.controller,
+    this.departmentFilter,
   });
 
   @override
@@ -52,19 +54,26 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
     return emp?.department;
   }
 
-  // Danh sách đơn nhân viên gửi lên (Admin cần duyệt)
+  String? get _scopedDept => widget.departmentFilter ?? (c.isManager ? c.user?.department : null);
+
+  // Danh sách đơn nhân viên gửi lên (Admin/Manager cần duyệt)
   List<WorkRequest> get _pendingApprovalRequests {
+    final scopedDept = _scopedDept;
     final list = c.data.requests.where((r) {
       final isStaffSelf = r.employeeId == _currentUserId;
       if (isStaffSelf) return false; // Không tự duyệt đơn của mình
       if (_statusFilter != 'all' && r.status != _statusFilter) return false;
+      if (scopedDept != null && scopedDept.isNotEmpty) {
+        final dept = _getEmployeeDept(r.employeeId);
+        if (dept?.toLowerCase() != scopedDept.toLowerCase()) return false;
+      }
       return true;
     }).toList()
       ..sort((a, b) => b.from.compareTo(a.from));
     return list;
   }
 
-  // Danh sách đơn của chính Admin
+  // Danh sách đơn của chính Admin / Manager
   List<WorkRequest> get _myRequests {
     final list = c.data.requests.where((r) {
       final isStaffSelf = r.employeeId == _currentUserId;
@@ -78,9 +87,15 @@ class _AdminRequestsScreenState extends State<AdminRequestsScreen>
 
   // Số lượng đơn nhân viên đang chờ duyệt
   int get _badgePendingCount {
-    return c.data.requests
-        .where((r) => r.employeeId != _currentUserId && r.status == 'pending')
-        .length;
+    final scopedDept = _scopedDept;
+    return c.data.requests.where((r) {
+      if (r.employeeId == _currentUserId || r.status != 'pending') return false;
+      if (scopedDept != null && scopedDept.isNotEmpty) {
+        final dept = _getEmployeeDept(r.employeeId);
+        if (dept?.toLowerCase() != scopedDept.toLowerCase()) return false;
+      }
+      return true;
+    }).length;
   }
 
   /// Xử lý duyệt / từ chối đơn kèm ô nhập phản hồi

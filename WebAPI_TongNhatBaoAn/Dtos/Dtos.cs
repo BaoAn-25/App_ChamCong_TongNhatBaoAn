@@ -3,8 +3,8 @@ using WebAPI_TongNhatBaoAn.Models;
 namespace WebAPI_TongNhatBaoAn.Dtos;
 
 public record RegisterRequest(string Name, string Email, string Username, string Password);
-public record VerifyCodeRequest(Guid ChallengeId, string Code);
-public record LoginRequest(string Username, string Password);
+public record VerifyCodeRequest(Guid ChallengeId, string Code, string? DeviceId = null);
+public record LoginRequest(string Username, string Password, string? DeviceId = null, string? TrustToken = null);
 public record ForgotPasswordRequest(string Identifier);
 public record ResetPasswordRequest(Guid ChallengeId, string Code, string NewPassword);
 public record RefreshRequest(string RefreshToken);
@@ -17,7 +17,7 @@ public record EmployeeDto(Guid Id, string Name, string Email, string Username, s
         new(e.Id, e.Name, e.Email, e.Username, e.Department, e.Role, e.ShiftId, e.Active);
 }
 
-public record TokenResponse(string AccessToken, DateTime AccessExpiresAt, string RefreshToken, EmployeeDto User);
+public record TokenResponse(string AccessToken, DateTime AccessExpiresAt, string RefreshToken, EmployeeDto User, string? TrustToken = null);
 
 public record EmployeeCreate(string Name, string Email, string Username, string Password,
     string? Department, string? Role, Guid? ShiftId);
